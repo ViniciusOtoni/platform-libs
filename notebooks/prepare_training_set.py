@@ -83,6 +83,9 @@ for split_name in ["train", "val", "test"]:
     )
 
 # COMMAND ----------
+from databricks.sdk import WorkspaceClient
+
+WorkspaceClient().workspace.mkdirs(f"/Shared/training-platform/{config.domain}")
 mlflow.set_experiment(f"/Shared/training-platform/{config.domain}/{config.model_name}")
 run = mlflow.start_run()
 mlflow.log_params({"train_pct": config.train_pct, "val_pct": config.val_pct, "test_pct": config.test_pct})
