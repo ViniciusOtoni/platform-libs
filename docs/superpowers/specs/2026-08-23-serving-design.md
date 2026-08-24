@@ -44,6 +44,20 @@ modo de escrita da saída. A tabela de predições deixa de ser um snapshot e pa
 um histórico apensado, o que é exatamente o que o Componente 4 precisa para calcular
 drift de saída ao longo do tempo.
 
+## 1.2 Emenda (2026-08-23, durante o design da arquitetura de plataforma)
+
+Uma decisão de arquitetura cross-cutting (documentada em
+[`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform)) reverteu a
+premissa de que domínios reais vivem dentro deste repositório. `serving-platform`
+passa a ser um **framework puro** — só a lib e uma pasta `examples/` não-produtiva
+(harness de integração), no lugar de `dominios/<domínio>/`. O contrato `ServingConfig`
+não muda (`domain` já era um campo explícito da dataclass, nunca inferido).
+
+Domínios reais passam a viver em repositórios próprios, instalando este pacote via
+`pip install git+https://github.com/ViniciusOtoni/serving-platform@vX.Y.Z` (tag
+semver, versionamento manual). O `.github/workflows/deploy.yml` passa a ser um caller
+fino do reusable workflow centralizado em `mlops-platform`.
+
 ## 2. Escopo
 
 **Dentro do escopo:**
@@ -127,11 +141,11 @@ para a trilha online no v1: o endpoint é sempre provisionado no menor tamanho
 disponível na Free Edition, com scale-to-zero tentado quando a API suportar — expor
 isso como configuração seria complexidade sem caso de uso ainda.
 
-Instâncias de `ServingConfig` são declaradas em `dominios/<domínio>/serving_configs.py`,
-mesma convenção de pastas dos outros três repositórios, e registradas via
-`register_serving_config(config)` — mesmo padrão de registro em memória dos
-Componentes 1 e 2 (não um decorator, já que não há uma função de transformação a
-decorar aqui, só configuração).
+Instâncias de `ServingConfig` são declaradas em repositórios de domínio próprios
+(emenda 1.2) — este repositório só fornece a lib. Um `serving_configs.py` de exemplo,
+não-produtivo, vive em `examples/`. Registradas via `register_serving_config(config)`
+— mesmo padrão de registro em memória dos Componentes 1 e 2 (não um decorator, já que
+não há uma função de transformação a decorar aqui, só configuração).
 
 ## 5. Trilha batch: uma única task via Feature Engineering
 

@@ -15,6 +15,13 @@ predições exige histórico — um snapshot sobrescrito a cada execução não 
 comparar. Reflexo já aplicado na Task 7 abaixo; ver
 `docs/superpowers/specs/2026-08-23-serving-design.md`, seção 1.1.
 
+**Emenda (2026-08-23, durante o design da arquitetura de plataforma):** este
+repositório passou a ser um framework puro — `dominios/exemplo/` foi renomeada para
+`examples/` (mesmo papel de harness de integração, não domínio real). O contrato
+`ServingConfig` não muda (`domain` já era um campo explícito). O
+`.github/workflows/deploy.yml` (Task 8) passou a ser um caller do reusable workflow
+centralizado em `mlops-platform`. Ver spec, seção 1.2.
+
 ---
 
 ## Scope Check
@@ -40,10 +47,9 @@ serving-platform/
 │       ├── quality.py           # Finding + gate de qualidade das predições batch
 │       ├── audit.py             # RunRecord/to_row/write_run (duplicado dos outros componentes)
 │       └── resource_gen.py      # gera jobs (batch) e model_serving_endpoints (online) a partir do registro
-├── dominios/
-│   └── exemplo/
-│       ├── __init__.py
-│       └── serving_configs.py   # ServingConfig de exemplo, modo batch
+├── examples/
+│   ├── __init__.py
+│   └── serving_configs.py       # ServingConfig de exemplo (não-produtivo), modo batch
 ├── notebooks/
 │   ├── score_batch.py           # única task da trilha batch
 │   └── refresh_endpoint.py      # atualização manual do endpoint online
@@ -817,21 +823,21 @@ real de um `ServingConfig` com `mode="online"` — passo de verificação explí
 Task 9.
 
 **Files:**
-- Create: `dominios/exemplo/__init__.py`
-- Create: `dominios/exemplo/serving_configs.py`
+- Create: `examples/__init__.py`
+- Create: `examples/serving_configs.py`
 - Create: `notebooks/score_batch.py`
 - Create: `notebooks/refresh_endpoint.py`
 - Create: `databricks.yml`
 - Create: `scripts/generate_resources.py`
 
-- [ ] **Step 1: Criar o domínio de exemplo (modo batch — sem custo de endpoint sempre ligado)**
+- [ ] **Step 1: Criar o exemplo não-produtivo (modo batch — sem custo de endpoint sempre ligado)**
 
 ```python
-# dominios/exemplo/__init__.py
+# examples/__init__.py
 ```
 
 ```python
-# dominios/exemplo/serving_configs.py
+# examples/serving_configs.py
 from serving_platform.contract import ServingConfig, register_serving_config
 
 config = ServingConfig(
@@ -856,7 +862,7 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
-import dominios.exemplo.serving_configs  # noqa: F401
+import examples.serving_configs  # noqa: F401
 from datetime import date, datetime
 
 import pyspark.sql.functions as F
@@ -940,7 +946,7 @@ dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
 # COMMAND ----------
-import dominios.exemplo.serving_configs  # noqa: F401
+import examples.serving_configs  # noqa: F401
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ServedEntityInput
 
@@ -1006,7 +1012,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import dominios.exemplo.serving_configs  # noqa: F401
+import examples.serving_configs  # noqa: F401
 from serving_platform.resource_gen import write_resources
 
 if __name__ == "__main__":
@@ -1037,13 +1043,13 @@ Expected: validação sem erros de estrutura.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add dominios/ notebooks/ databricks.yml scripts/generate_resources.py resources/.gitkeep
-git commit -m "feat: add example batch domain, notebooks, and DAB bundle root"
+git add examples/ notebooks/ databricks.yml scripts/generate_resources.py resources/.gitkeep
+git commit -m "feat: add non-productive batch example, notebooks, and DAB bundle root"
 ```
 
 ---
 
-## Task 8: GitHub Actions — deploy com tracking de commit/branch
+## Task 8: GitHub Actions — caller do reusable workflow (`mlops-platform`)
 
 **Files:**
 - Create: `.github/workflows/deploy.yml`
@@ -1052,7 +1058,7 @@ git commit -m "feat: add example batch domain, notebooks, and DAB bundle root"
 
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy serving-platform
+name: Deploy
 
 on:
   push:
@@ -1060,45 +1066,21 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Run unit tests
-        run: pytest
-
-      - name: Generate resources
-        run: python scripts/generate_resources.py
-
-      - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
-
-      - name: Deploy bundle
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks bundle deploy -t dev \
-            --var="git_commit=${{ github.sha }}" \
-            --var="git_branch=${{ github.ref_name }}"
+    uses: ViniciusOtoni/mlops-platform/.github/workflows/deploy-bundle.yml@main
+    with:
+      working-directory: .
+    secrets: inherit
 ```
 
-- [ ] **Step 2: Confirmar os secrets `DATABRICKS_HOST`/`DATABRICKS_TOKEN` no GitHub
-  (mesmos valores dos outros repositórios, se for o mesmo workspace).
+- [ ] **Step 2: Confirmar os secrets `DATABRICKS_HOST`/`DATABRICKS_TOKEN` **neste
+  repositório** (`secrets: inherit` propaga os secrets do repositório chamador, não os
+  do `mlops-platform`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/deploy.yml
-git commit -m "ci: deploy bundle on push to main with git commit/branch tracking"
+git commit -m "ci: call mlops-platform's shared deploy-bundle reusable workflow"
 ```
 
 ---
@@ -1135,6 +1117,12 @@ config = ServingConfig(
 )
 register_serving_config(config)
 ```
+
+Este repositório é um framework puro — não é onde domínios reais declaram seus
+servings. Instale este pacote no repositório do seu domínio
+(`pip install git+https://github.com/ViniciusOtoni/serving-platform@vX.Y.Z`) e
+declare o módulo lá. Convenção completa em
+[`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform).
 
 ## Local (sem Spark)
 
