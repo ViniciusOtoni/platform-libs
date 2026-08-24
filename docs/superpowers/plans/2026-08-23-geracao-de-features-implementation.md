@@ -51,6 +51,27 @@ Essas três correções estão commitadas juntas no repositório
 código abaixo, nas Tasks 7, 8 e 12, ainda mostram a versão pré-correção — trate o texto
 desta nota como a versão vigente.
 
+**Correção (2026-08-24, descoberta indiretamente — rodando o `training-platform`, um
+consumidor deste componente, contra a mesma feature table de exemplo):**
+`write_feature_table` (Task 7, `writer.py`) nunca declarava uma `PRIMARY KEY` na tabela
+gerada. O Feature Engineering em Unity Catalog exige essa constraint para reconhecer uma
+tabela como feature table via `FeatureLookup` — sem ela, `fe.create_training_set(...)`
+falha com `BAD_REQUEST: Table can't be used as a feature table because it has no primary
+key constraint defined`. Como a tabela tem `timestamp_key`, a constraint precisa marcar
+essa coluna com `TIMESERIES` (senão o FE não reconhece a semântica de série temporal
+usada pelo `timestamp_lookup_key` no lookup). Corrigido adicionando, ao final de
+`write_feature_table`, um passo idempotente `_ensure_primary_key` que:
+1. Verifica via `system.information_schema.table_constraints` se a tabela já tem uma
+   `PRIMARY KEY` — se sim, não faz nada (self-healing sem custo em escritas repetidas).
+2. Caso contrário, marca `entity_keys` + `timestamp_key` como `NOT NULL` (pré-requisito
+   de Delta para colunas de PK) e roda
+   `ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY (<entity_keys>, <timestamp_key> TIMESERIES)`.
+
+Por ser chamado no final de `write_feature_table` independente do modo (merge ou
+overwrite), isso também autocura tabelas já existentes criadas antes desta correção — a
+próxima escrita nelas adiciona a constraint retroativamente. O bloco de código abaixo,
+na Task 7, ainda mostra a versão pré-correção.
+
 ---
 
 ## Scope Check
