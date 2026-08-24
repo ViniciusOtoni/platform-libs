@@ -101,6 +101,13 @@ mlflow.set_registry_uri("databricks-uc")
 model_schema = full_model_name.rsplit(".", 1)[0]
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {model_schema}")
 
+# `FeaturePlatformModel` (ou o pyfunc_model_class customizado do usuário) mora em
+# training_platform/, que nunca é instalado como dependência de pip — só existe via o
+# bootstrap de sys.path deste próprio job. Sem code_paths, o cloudpickle do artefato
+# não consegue reimportar esse módulo em nenhum ambiente fora de um job do
+# training-platform (ex.: um job de scoragem do serving-platform), falhando com
+# ModuleNotFoundError: No module named 'training_platform'. code_paths embarca o
+# pacote no artefato do modelo e o adiciona ao sys.path de quem carregar o modelo.
 with mlflow.start_run(run_id=mlflow_run_id):
     fe.log_model(
         model=wrapped_model,
@@ -108,6 +115,7 @@ with mlflow.start_run(run_id=mlflow_run_id):
         flavor=mlflow.pyfunc,
         training_set=training_set,
         registered_model_name=full_model_name,
+        code_paths=[os.path.join(_repo_root, "src", "training_platform")],
     )
     mlflow.set_tag("git_commit", git_commit)
     mlflow.set_tag("git_branch", git_branch)
