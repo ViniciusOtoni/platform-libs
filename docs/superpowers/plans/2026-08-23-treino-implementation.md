@@ -1098,6 +1098,21 @@ register_training_config(config)
 > `feature_cols = [c for c in train_df.columns if c not in {config.label_column, *[fl.lookup_key for fl in config.feature_lookups]}]`
 > nas três notebooks.
 
+> **Correção (achado ao vivo, Task 13 — verificação de nested runs):** os `combo_i`
+> criados por `fit_and_compare_hyperparams.py` via `mlflow.start_run(run_name=f"combo_{i}", nested=True)`
+> tinham o `mlflow.parentRunId` correto, mas apareciam no experimento default do
+> notebook (`.../files/notebooks/fit_and_compare_hyperparams`), não no experimento
+> compartilhado `/Shared/training-platform/<domain>/<model_name>` — cada task de um job
+> roda num processo Python separado, então o `mlflow.set_experiment(...)` chamado em
+> `prepare_training_set.py` não vale para as tasks seguintes; sem chamar de novo,
+> `start_run(nested=True)` cria a run nova no experimento default do notebook atual.
+> Corrigido chamando `mlflow.set_experiment(f"/Shared/training-platform/{config.domain}/{config.model_name}")`
+> no início de `fit_and_compare_hyperparams.py`, antes do `with mlflow.start_run(run_id=mlflow_run_id):`
+> (o diretório pai já existe a essa altura — foi criado por `prepare_training_set`, task
+> anterior no DAG). `select_best_and_test.py` e `register_model.py` não precisam do mesmo
+> fix porque só reabrem o run existente via `run_id=mlflow_run_id` para logar
+> métricas/tags — não criam runs novos, então não dependem do experimento ativo.
+
 > **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
 > com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
 > o `.venv` local, não o runtime remoto. O job falhou com
@@ -1237,6 +1252,7 @@ catalog = dbutils.widgets.get("catalog")
 config = get_training_config(model_name)
 
 mlflow_run_id = dbutils.jobs.taskValues.get(taskKey="prepare_training_set", key="mlflow_run_id")
+mlflow.set_experiment(f"/Shared/training-platform/{config.domain}/{config.model_name}")
 
 # COMMAND ----------
 scratch_prefix = f"{catalog}.training_scratch.{model_name}"
