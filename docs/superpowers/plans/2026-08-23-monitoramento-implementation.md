@@ -16,6 +16,27 @@ repositório passou a ser um framework puro — `dominios/exemplo/` foi renomead
 centralizado em `mlops-platform`. Ver
 `docs/superpowers/specs/2026-08-23-monitoramento-design.md`, seção 1.1.
 
+**Correção preventiva (2026-08-24, por analogia com bugs já confirmados ao vivo nos
+três componentes anteriores, aplicada antes de qualquer implementação deste
+componente):**
+1. **Extensão `.py` em `notebook_path`** — o CLI instalado rejeita referências sem
+   extensão. `resource_gen.py` (Task 8) usa `"../notebooks/evaluate_drift.py"`.
+2. **Bootstrap de `sys.path`** — o cwd de um notebook deployado via DAB não inclui a
+   raiz do bundle nem `src/` por padrão. `evaluate_drift.py` (Task 9) insere os dois
+   antes de importar `examples.monitoring_configs`/`monitoring_platform`.
+3. **`currentRunId()` sem `.get()` e sem fallback** — levanta `Py4JSecurityException`
+   em compute serverless/shared access mode. `evaluate_drift.py` usa
+   `.currentRunId().get().toString()` num `try`, com fallback para `uuid.uuid4()`.
+4. **`CREATE SCHEMA IF NOT EXISTS` antes do primeiro `saveAsTable`** — Unity Catalog
+   não cria o schema sozinho. Aplicado em dois lugares: `audit.py`'s `write_run` (Task
+   7, mesmo padrão exato dos três componentes anteriores) e `central_table.py`'s
+   `write_drift_metrics` (Task 6) — `platform_monitoring` é um schema novo, nunca
+   criado por nenhum componente anterior.
+
+Nenhum desses foi validado ao vivo neste componente ainda — são inferências por
+analogia. A Task 12 (verificação ponta a ponta) confirma se bastam, junto com o risco
+central do Lakehouse Monitoring (spec, seção 6).
+
 ---
 
 ## Scope Check
@@ -626,6 +647,11 @@ def build_drift_metric_row(
 
 def write_drift_metrics(spark, rows: list[dict]) -> None:
     """Requer SparkSession — exercitado via notebook (Task 9), não via pytest."""
+    # saveAsTable não cria o schema automaticamente em Unity Catalog — platform_monitoring
+    # é um schema novo, nunca criado por nenhum componente anterior (mesmo bug já
+    # confirmado nos três componentes anteriores).
+    schema = DRIFT_METRICS_TABLE.split(".")[0]
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     df = spark.createDataFrame(rows)
     if spark.catalog.tableExists(DRIFT_METRICS_TABLE):
         df.write.format("delta").mode("append").saveAsTable(DRIFT_METRICS_TABLE)
@@ -745,6 +771,11 @@ def to_row(record: RunRecord) -> dict:
 
 def write_run(spark, record: RunRecord) -> None:
     """Requer SparkSession — exercitado via notebook (Task 9), não via pytest."""
+    # saveAsTable não cria o schema automaticamente em Unity Catalog — sem isso,
+    # a primeira escrita falha com SCHEMA_NOT_FOUND (mesmo bug confirmado nos três
+    # componentes anteriores).
+    schema = AUDIT_TABLE.split(".")[0]
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     df = spark.createDataFrame([to_row(record)])
     if spark.catalog.tableExists(AUDIT_TABLE):
         df.write.format("delta").mode("append").saveAsTable(AUDIT_TABLE)
@@ -827,7 +858,7 @@ def test_each_job_has_a_single_evaluate_drift_task():
     job = list(resources["resources"]["jobs"].values())[0]
 
     assert [t["task_key"] for t in job["tasks"]] == ["evaluate_drift"]
-    assert job["tasks"][0]["notebook_task"]["notebook_path"] == "../notebooks/evaluate_drift"
+    assert job["tasks"][0]["notebook_task"]["notebook_path"] == "../notebooks/evaluate_drift.py"
 
 
 def test_job_parameters_carry_domain_model_and_target_type():
@@ -854,7 +885,7 @@ import yaml
 from .contract import get_registry
 from .naming import derive_monitor_key
 
-NOTEBOOK_PATH = "../notebooks/evaluate_drift"
+NOTEBOOK_PATH = "../notebooks/evaluate_drift.py"
 
 
 def _monitoring_job(key: str, config) -> dict:
@@ -980,6 +1011,17 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
+# Num job deployado via DAB, o cwd do notebook é .../files/notebooks — nem a raiz
+# do bundle (onde mora `examples/`) nem `src/` (onde mora `monitoring_platform`) estão
+# no sys.path por padrão.
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import examples.monitoring_configs  # noqa: F401
 from datetime import date, datetime
 
@@ -999,7 +1041,15 @@ catalog = dbutils.widgets.get("catalog")
 git_commit = dbutils.widgets.get("git_commit")
 git_branch = dbutils.widgets.get("git_branch")
 config = get_monitoring_config(domain, model_name, target_type)
-run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().toString()
+# currentRunId() não está na whitelist do Py4J em compute serverless/shared access
+# mode — levanta Py4JSecurityException. Cai para um id gerado localmente quando o
+# contexto de job não expõe o run id dessa forma.
+try:
+    run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().get().toString()
+except Exception:
+    import uuid
+
+    run_id_job = str(uuid.uuid4())
 full_model_name = f"{catalog}.{domain}_models.{model_name}"
 
 # COMMAND ----------
@@ -1133,12 +1183,20 @@ targets:
 
 - [ ] **Step 4: Criar `scripts/generate_resources.py`**
 
+> **Correção preventiva:** o `sys.path.insert` original só incluía `src/`, não a raiz
+> do repositório — rodar o script diretamente não coloca a raiz no `sys.path`
+> automaticamente, quebrando `import examples.monitoring_configs` com
+> `ModuleNotFoundError: No module named 'examples'` (mesmo bug já confirmado três
+> vezes: `feature-platform`, `serving-platform`).
+
 ```python
 # scripts/generate_resources.py
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+_repo_root = Path(__file__).parent.parent
+for _p in (_repo_root, _repo_root / "src"):
+    sys.path.insert(0, str(_p))
 
 import examples.monitoring_configs  # noqa: F401
 from monitoring_platform.resource_gen import write_resources
