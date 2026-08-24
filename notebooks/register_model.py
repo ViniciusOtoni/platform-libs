@@ -1,0 +1,102 @@
+# Databricks notebook source
+dbutils.widgets.text("model_name", "")
+dbutils.widgets.text("catalog", "workspace")
+dbutils.widgets.text("git_commit", "local")
+dbutils.widgets.text("git_branch", "local")
+
+# COMMAND ----------
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import examples.training_configs  # noqa: F401
+import json
+from datetime import date, datetime
+import mlflow
+from databricks.feature_engineering import FeatureEngineeringClient, FeatureLookup
+
+from training_platform.contract import get_training_config
+from training_platform.pipeline import build_pipeline
+from training_platform.pyfunc_model import FeaturePlatformModel
+from training_platform.naming import derive_model_name
+from training_platform.audit import RunRecord, write_run
+
+# COMMAND ----------
+model_name = dbutils.widgets.get("model_name")
+catalog = dbutils.widgets.get("catalog")
+git_commit = dbutils.widgets.get("git_commit")
+git_branch = dbutils.widgets.get("git_branch")
+config = get_training_config(model_name)
+
+mlflow_run_id = dbutils.jobs.taskValues.get(taskKey="prepare_training_set", key="mlflow_run_id")
+window_start = dbutils.jobs.taskValues.get(taskKey="prepare_training_set", key="window_start")
+window_end = dbutils.jobs.taskValues.get(taskKey="prepare_training_set", key="window_end")
+best_hyperparameters = json.loads(
+    dbutils.jobs.taskValues.get(taskKey="select_best_and_test", key="best_hyperparameters")
+)
+try:
+    run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().get().toString()
+except Exception:
+    import uuid
+
+    run_id_job = str(uuid.uuid4())
+
+# COMMAND ----------
+scratch_prefix = f"{catalog}.training_scratch.{model_name}"
+train_df = spark.table(f"{scratch_prefix}_train").toPandas()
+feature_cols = [c for c in train_df.columns if c != config.label_column]
+X_train, y_train = train_df[feature_cols], train_df[config.label_column]
+
+estimator = config.algorithm(**best_hyperparameters)
+pipeline = build_pipeline(config.custom_transforms, estimator)
+pipeline.fit(X_train, y_train)
+
+pyfunc_class = config.pyfunc_model_class or FeaturePlatformModel
+wrapped_model = pyfunc_class(pipeline)
+
+# COMMAND ----------
+fe = FeatureEngineeringClient()
+feature_lookups = [
+    FeatureLookup(
+        table_name=fl.table_name,
+        feature_names=fl.feature_names,
+        lookup_key=fl.lookup_key,
+        timestamp_lookup_key=fl.timestamp_lookup_key,
+    )
+    for fl in config.feature_lookups
+]
+full_model_name = derive_model_name(catalog, config.domain, config.model_name)
+mlflow.set_registry_uri("databricks-uc")
+
+with mlflow.start_run(run_id=mlflow_run_id):
+    fe.log_model(
+        model=wrapped_model,
+        artifact_path="model",
+        flavor=mlflow.pyfunc,
+        training_set=None,
+        feature_lookups=feature_lookups,
+        registered_model_name=full_model_name,
+    )
+    mlflow.set_tag("git_commit", git_commit)
+    mlflow.set_tag("git_branch", git_branch)
+
+# COMMAND ----------
+write_run(
+    spark,
+    RunRecord(
+        component="training",
+        entity_name=full_model_name,
+        git_commit=git_commit,
+        git_branch=git_branch,
+        run_id=run_id_job,
+        mode="train",
+        status="SUCCESS",
+        window_start=date.fromisoformat(window_start),
+        window_end=date.fromisoformat(window_end),
+        run_ts=datetime.utcnow(),
+    ),
+)
