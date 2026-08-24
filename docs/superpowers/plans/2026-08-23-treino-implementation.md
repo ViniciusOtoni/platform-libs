@@ -1768,13 +1768,27 @@ git commit -m "docs: add README with usage instructions"
 
 ## Task 13: Verificação ponta a ponta no workspace
 
-- [ ] **Step 1:** Confirmar que `workspace.exemplo.spine_train` existe (colunas
+**Concluída em 2026-08-24, ao vivo contra o workspace Free Edition.** Cinco bugs reais
+foram encontrados e corrigidos ao longo da verificação (ver notas "Correção" acima,
+todas datadas 2026-08-24): bootstrap `%pip install databricks-feature-engineering` +
+`CREATE SCHEMA` para `training_scratch`; `create_training_set` excluindo
+`reference_date` cedo demais; `mlflow.set_experiment` não criando o diretório pai;
+`lookup_key` vazando como feature não-numérica; e o `scorer` do sklearn crashando (em
+vez do gate falhar gracefully) com `X_test` vazio. Cada um foi corrigido no código, no
+plano e revalidado com uma nova execução real antes de passar para o próximo.
+
+- [x] **Step 1:** Confirmar que `workspace.exemplo.spine_train` existe (colunas
   `customer_id`, `reference_date`, `label_default`) e que a feature table
   `workspace.exemplo_features.customer_transaction_features` do Componente 1 já foi
   populada via backfill. Se não existir, rodar o backfill do `feature-platform`
   primeiro (dependência real entre os dois componentes).
 
-- [ ] **Step 2:** Rodar o pipeline de treino:
+  Confirmado: ambas já existiam no workspace (criadas durante a verificação do
+  Componente 1). A feature table também precisou de uma correção retroativa no
+  `feature-platform` (PRIMARY KEY ausente — ver o plano daquele repositório) antes do
+  `FeatureLookup` funcionar.
+
+- [x] **Step 2:** Rodar o pipeline de treino:
 ```powershell
 databricks bundle run training_pipeline -t dev --params model_name=propensao_exemplo
 ```
@@ -1782,18 +1796,41 @@ Expected: as 4 tasks terminam `SUCCESS`; um modelo novo aparece em
 `workspace.exemplo_models.propensao_exemplo` no Unity Catalog; uma linha `SUCCESS` em
 `workspace.platform_audit.pipeline_runs` com `component="training"`.
 
-- [ ] **Step 3:** Confirmar no MLflow que o experimento
+  Confirmado após as correções acima: `prepare_training_set` → `fit_and_compare_hyperparams`
+  → `select_best_and_test` → `register_model`, todas `SUCCESS`. Duas versões do modelo
+  registradas em `workspace.exemplo_models.propensao_exemplo` (v1 e v2, de execuções
+  sucessivas). Linhas `SUCCESS` confirmadas em `platform_audit.pipeline_runs` via query
+  SQL direta.
+
+- [x] **Step 3:** Confirmar no MLflow que o experimento
   `/Shared/training-platform/exemplo/propensao_exemplo` tem um run pai com um run
   aninhado por combinação de hiperparâmetros, e que o run pai tem a métrica de teste
   logada.
 
-- [ ] **Step 4:** Forçar uma falha do gate de sanidade (ex.: um `metric` inválido que
+  Confirmado via `databricks experiments search-runs`: run pai `1105a68f...` com
+  `test_roc_auc=0.446` e dois filhos aninhados (`combo_0`, `combo_1`, `mlflow.parentRunId`
+  correto, métrica `roc_auc` de cada combinação). Exigiu a correção do `mlflow.set_experiment`
+  ausente em `fit_and_compare_hyperparams.py` (sem isso, os runs aninhados apareciam no
+  experimento default do notebook, não no experimento compartilhado do domínio/modelo).
+
+- [x] **Step 4:** Forçar uma falha do gate de sanidade (ex.: um `metric` inválido que
   produza `NaN`) e confirmar que **nenhuma versão nova é registrada**, e que a
   auditoria grava `status=FAILED`.
 
-- [ ] **Step 5:** Confirmar que nenhum alias (`champion`/`challenger`) foi movido
+  Forçado via uma `TrainingConfig` temporária com `test_pct=0.0` (tabela de teste
+  vazia) — revertida depois da verificação, não faz parte do exemplo permanente.
+  Confirmado: `select_best_and_test` falha com
+  `ValueError: sanity gate failed: ['metric_is_finite', 'predictions_not_empty']`;
+  `register_model` nunca roda (`UPSTREAM_FAILED`); `workspace.exemplo_models.propensao_exemplo_gate_fail`
+  não existe; linha `FAILED` gravada em `platform_audit.pipeline_runs`. Exigiu a
+  correção do Step 4 acima (o `scorer` do sklearn crashava antes do gate rodar).
+
+- [x] **Step 5:** Confirmar que nenhum alias (`champion`/`challenger`) foi movido
   automaticamente — a versão nova aparece registrada, sem alias, esperando promoção
   manual.
+
+  Confirmado via `databricks model-versions list`: as duas versões registradas (v1, v2)
+  não têm nenhum alias atribuído.
 
 ---
 
