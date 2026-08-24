@@ -28,7 +28,7 @@ from databricks.feature_engineering import FeatureEngineeringClient, FeatureLook
 from training_platform.contract import get_training_config
 from training_platform.pipeline import build_pipeline
 from training_platform.pyfunc_model import FeaturePlatformModel
-from training_platform.naming import derive_model_name
+from training_platform.naming import derive_model_name, validate_model_name
 from training_platform.audit import RunRecord, write_run
 
 # COMMAND ----------
@@ -79,20 +79,25 @@ feature_lookups = [
     for fl in config.feature_lookups
 ]
 spine = spark.table(config.spine_table)
+# Sem exclude_columns aqui de propósito: diferente de prepare_training_set.py, este
+# TrainingSet nunca passa por load_df() — só alimenta fe.log_model() para embarcar o
+# FeatureSpec no artefato. exclude_columns só afeta o DataFrame de load_df(), então
+# seria um parâmetro morto e visualmente confundível com o bug já corrigido em
+# prepare_training_set.py.
 training_set = fe.create_training_set(
     df=spine,
     feature_lookups=feature_lookups,
     label=config.label_column,
-    exclude_columns=[config.reference_date_column],
 )
 
 full_model_name = derive_model_name(catalog, config.domain, config.model_name)
+validate_model_name(full_model_name)
 mlflow.set_registry_uri("databricks-uc")
 
-# Por analogia com o SCHEMA_NOT_FOUND já confirmado duas vezes (audit.py, writer.py do
-# feature-platform) ao escrever numa tabela de schema novo via saveAsTable — registrar
-# um modelo UC num schema novo provavelmente tem o mesmo requisito. Inferência ainda
-# não validada ao vivo; a Task 13 confirma se isso é necessário de fato.
+# Mesmo requisito já confirmado para tabelas (audit.py, writer.py do feature-platform):
+# saveAsTable/registro UC não cria o schema automaticamente. Confirmado ao vivo na
+# Task 13 — o primeiro registro bem-sucedido precisou desta linha para criar
+# `exemplo_models` antes de `fe.log_model`.
 model_schema = full_model_name.rsplit(".", 1)[0]
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {model_schema}")
 

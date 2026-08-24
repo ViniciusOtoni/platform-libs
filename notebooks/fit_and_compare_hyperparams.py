@@ -47,7 +47,10 @@ with mlflow.start_run(run_id=mlflow_run_id):
             estimator = config.algorithm(**hyperparams)
             pipeline = build_pipeline(config.custom_transforms, estimator)
             pipeline.fit(X_train, y_train)
-            metric_value = float(scorer(pipeline, X_val, y_val))
+            if len(X_val) > 0:
+                metric_value = float(scorer(pipeline, X_val, y_val))
+            else:
+                metric_value = float("nan")
             mlflow.log_params(hyperparams)
             mlflow.log_metric(metric_name, metric_value)
             results.append({"hyperparameters": hyperparams, "metric": metric_value})
