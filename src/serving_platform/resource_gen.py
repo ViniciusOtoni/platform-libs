@@ -34,14 +34,21 @@ def _batch_job(model_name: str, config) -> dict:
     }
 
 
-def _online_endpoint(model_name: str, config) -> dict:
+def _online_endpoint(model_name: str, config, entity_version: int) -> dict:
+    # model_serving_endpoints em DABs não aceita a sintaxe models:/nome@alias em
+    # entity_name — só um entity_name puro + entity_version numérico fixo (confirmado
+    # ao vivo: 404 RESOURCE_DOES_NOT_EXIST tentando "...@champion"). O alias é
+    # resolvido para a versão vigente no momento da geração (ver
+    # resolve_alias_version); mover o alias depois exige rodar refresh_endpoint
+    # (Task 7) ou gerar os recursos de novo.
     return {
         "name": derive_endpoint_name(config.domain, model_name),
         "config": {
             "served_entities": [
                 {
                     "name": model_name,
-                    "entity_name": f"${{var.catalog}}.{config.domain}_models.{model_name}@{config.alias}",
+                    "entity_name": f"${{var.catalog}}.{config.domain}_models.{model_name}",
+                    "entity_version": str(entity_version),
                     "scale_to_zero_enabled": True,
                     "workload_size": "Small",
                 }
@@ -72,7 +79,11 @@ def _refresh_endpoint_job() -> dict:
     }
 
 
-def generate_resources() -> dict:
+def generate_resources(resolve_alias_version=None) -> dict:
+    """resolve_alias_version: callable (model_name: str, config: ServingConfig) -> int.
+    Obrigatório quando há algum ServingConfig com mode="online" — model_serving_endpoints
+    em DABs só aceita entity_version (um número), não um alias, então o alias precisa
+    ser resolvido para a versão vigente no momento da geração dos recursos."""
     registry = get_registry()
     jobs = {"refresh_endpoint": _refresh_endpoint_job()}
     endpoints = {}
@@ -81,7 +92,15 @@ def generate_resources() -> dict:
         if config.mode == "batch":
             jobs[f"score_batch_{model_name}"] = _batch_job(model_name, config)
         else:
-            endpoints[derive_endpoint_name(config.domain, model_name)] = _online_endpoint(model_name, config)
+            if resolve_alias_version is None:
+                raise ValueError(
+                    f"ServingConfig '{model_name}' has mode='online' but no "
+                    "resolve_alias_version resolver was provided to generate_resources()"
+                )
+            entity_version = resolve_alias_version(model_name, config)
+            endpoints[derive_endpoint_name(config.domain, model_name)] = _online_endpoint(
+                model_name, config, entity_version
+            )
 
     resources = {"resources": {"jobs": jobs}}
     if endpoints:
@@ -89,6 +108,6 @@ def generate_resources() -> dict:
     return resources
 
 
-def write_resources(path: str) -> None:
+def write_resources(path: str, resolve_alias_version=None) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(generate_resources(), f, sort_keys=False)
+        yaml.safe_dump(generate_resources(resolve_alias_version), f, sort_keys=False)

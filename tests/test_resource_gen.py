@@ -34,12 +34,20 @@ def test_batch_config_generates_a_scheduled_job_with_one_task():
 def test_online_config_generates_a_model_serving_endpoint():
     register_serving_config(ServingConfig(domain="exemplo", model_name="modelo_online", mode="online"))
 
-    resources = generate_resources()
+    resources = generate_resources(resolve_alias_version=lambda model_name, config: 3)
     endpoints = resources["resources"]["model_serving_endpoints"]
 
     endpoint = endpoints["exemplo-modelo_online-serving"]
     served_entity = endpoint["config"]["served_entities"][0]
-    assert served_entity["entity_name"] == "${var.catalog}.exemplo_models.modelo_online@champion"
+    assert served_entity["entity_name"] == "${var.catalog}.exemplo_models.modelo_online"
+    assert served_entity["entity_version"] == "3"
+
+
+def test_online_config_without_resolver_raises_clear_error():
+    register_serving_config(ServingConfig(domain="exemplo", model_name="modelo_online", mode="online"))
+
+    with pytest.raises(ValueError, match="resolve_alias_version"):
+        generate_resources()
 
 
 def test_generate_resources_always_includes_refresh_endpoint_job():
