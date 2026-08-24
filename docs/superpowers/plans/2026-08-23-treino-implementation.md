@@ -846,6 +846,13 @@ git commit -m "feat: add default overridable pyfunc wrapper"
 Duplicado deliberadamente do `feature-platform` (decisão registrada no spec, seção 9) —
 mesmo schema, mesma implementação.
 
+**Correção aplicada preventivamente (2026-08-24):** a implementação do `feature-platform`
+(mesmo módulo, código idêntico) precisou de uma correção descoberta rodando de verdade
+contra o workspace: `saveAsTable` não cria o schema automaticamente no Unity Catalog —
+a primeira escrita falha com `SCHEMA_NOT_FOUND`. Como é o mesmo bug, na mesma tabela
+(`platform_audit.pipeline_runs`), o `write_run` abaixo já inclui o `CREATE SCHEMA IF
+NOT EXISTS` desde o início, em vez de esperar descobrir o mesmo problema de novo.
+
 **Files:**
 - Create: `src/training_platform/audit.py`
 - Test: `tests/test_audit.py`
@@ -939,6 +946,10 @@ def to_row(record: RunRecord) -> dict:
 
 def write_run(spark, record: RunRecord) -> None:
     """Requer SparkSession — exercitado via notebook (Task 10), não via pytest."""
+    # saveAsTable não cria o schema automaticamente em Unity Catalog — sem isso,
+    # a primeira escrita falha com SCHEMA_NOT_FOUND (achado no feature-platform).
+    schema = AUDIT_TABLE.split(".")[0]
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     df = spark.createDataFrame([to_row(record)])
     if spark.catalog.tableExists(AUDIT_TABLE):
         df.write.format("delta").mode("append").saveAsTable(AUDIT_TABLE)
