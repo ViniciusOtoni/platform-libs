@@ -1078,6 +1078,15 @@ register_training_config(config)
 > (a coluna não deve vazar como feature nas tabelas `train`/`val`/`test`), só adiando a
 > remoção para depois de ela ser usada.
 
+> **Correção (achado ao vivo, Task 13 — mesma rodada):**
+> `mlflow.set_experiment(f"/Shared/training-platform/{config.domain}/{config.model_name}")`
+> falhava com `RestException: NOT_FOUND: Parent directory does not exist:
+> /Shared/training-platform/exemplo` — diferente de uma tabela UC, um experimento MLflow
+> em workspace path não cria os diretórios pai automaticamente. Corrigido adicionando
+> `WorkspaceClient().workspace.mkdirs(f"/Shared/training-platform/{config.domain}")`
+> (idempotente — `mkdirs` não falha se o diretório já existir) logo antes do
+> `mlflow.set_experiment(...)`.
+
 > **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
 > com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
 > o `.venv` local, não o runtime remoto. O job falhou com
@@ -1174,6 +1183,9 @@ for split_name in ["train", "val", "test"]:
     )
 
 # COMMAND ----------
+from databricks.sdk import WorkspaceClient
+
+WorkspaceClient().workspace.mkdirs(f"/Shared/training-platform/{config.domain}")
 mlflow.set_experiment(f"/Shared/training-platform/{config.domain}/{config.model_name}")
 run = mlflow.start_run()
 mlflow.log_params({"train_pct": config.train_pct, "val_pct": config.val_pct, "test_pct": config.test_pct})
