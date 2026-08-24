@@ -988,6 +988,17 @@ rodando de verdade contra um job deployado via DAB:**
    `register_model.py`) já usam `.currentRunId().get().toString()` com fallback para
    um `uuid.uuid4()` gerado localmente.
 
+**Correção (2026-08-24, achada na revisão de qualidade da Task 10 — não numa execução
+real, mas verificada contra a API do `databricks-feature-engineering`):**
+`register_model.py` chamava `fe.log_model(..., training_set=None,
+feature_lookups=feature_lookups, ...)` — `feature_lookups` não é um parâmetro
+reconhecido de `log_model` (é descartado silenciosamente) e `training_set=None` sem
+mais nada levantaria erro em runtime. Corrigido: `register_model.py` agora chama
+`fe.create_training_set(...)` de novo (mesmo padrão do `prepare_training_set.py`,
+lendo a spine) para obter um `TrainingSet` de verdade, e passa esse objeto como
+`training_set=training_set` — é ele que carrega o FeatureSpec embarcado no artefato do
+modelo.
+
 **Contrato de `taskValues` entre as 4 tasks** (documentado aqui porque nenhum módulo
 Python isolado o representa sozinho — é o "cimento" entre os notebooks):
 
@@ -1370,6 +1381,9 @@ pyfunc_class = config.pyfunc_model_class or FeaturePlatformModel
 wrapped_model = pyfunc_class(pipeline)
 
 # COMMAND ----------
+# `fe.log_model` não aceita `feature_lookups` diretamente nem `training_set=None` —
+# exige um `TrainingSet` de verdade (o mesmo padrão que `prepare_training_set.py` já
+# usa), que carrega o FeatureSpec a ser embarcado no artefato do modelo.
 fe = FeatureEngineeringClient()
 feature_lookups = [
     FeatureLookup(
@@ -1380,6 +1394,14 @@ feature_lookups = [
     )
     for fl in config.feature_lookups
 ]
+spine = spark.table(config.spine_table)
+training_set = fe.create_training_set(
+    df=spine,
+    feature_lookups=feature_lookups,
+    label=config.label_column,
+    exclude_columns=[config.reference_date_column],
+)
+
 full_model_name = derive_model_name(catalog, config.domain, config.model_name)
 mlflow.set_registry_uri("databricks-uc")
 
@@ -1388,8 +1410,7 @@ with mlflow.start_run(run_id=mlflow_run_id):
         model=wrapped_model,
         artifact_path="model",
         flavor=mlflow.pyfunc,
-        training_set=None,
-        feature_lookups=feature_lookups,
+        training_set=training_set,
         registered_model_name=full_model_name,
     )
     mlflow.set_tag("git_commit", git_commit)
