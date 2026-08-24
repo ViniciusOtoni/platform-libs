@@ -1031,9 +1031,15 @@ git commit -m "feat: generate one scheduled DAB job per monitoring config"
 >    em vez de montar o nome manualmente.
 > 2. Esperar o refresh terminar antes de ler a tabela de saída, com polling limitado
 >    (`list_refreshes`/`get_refresh`, checando `MonitorRefreshInfoState`, timeout de
->    600s) — levanta erro claro (`TimeoutError`/`RuntimeError`) se o refresh não
+>    1200s) — levanta erro claro (`TimeoutError`/`RuntimeError`) se o refresh não
 >    terminar ou terminar em `FAILED`/`CANCELED`, em vez de deixar a leitura da tabela
 >    falhar de forma confusa por causa de dados ainda não prontos.
+>
+> **Ajuste de timeout (mesma rodada):** o primeiro timeout (600s/10min) estourou ao
+> vivo — três refreshes observados levaram 311s, 365s e 822s (~5 a ~14 minutos),
+> provavelmente por causa do tempo de provisionamento de compute serverless na Free
+> Edition para o pipeline interno do LHM. Ajustado para 1200s (20min) para dar margem
+> de segurança.
 
 Glue code + configuração. **Risco documentado no spec (seção 6), não um placeholder**:
 os nomes exatos dos métodos do `databricks-sdk` para criar/atualizar um monitor do
@@ -1203,11 +1209,12 @@ except Exception:
 
 # O cálculo de profile/drift metrics do LHM é assíncrono — sem esperar o refresh
 # terminar, a tabela de saída pode não existir ou estar desatualizada quando lida
-# abaixo. Timeout de 10min é generoso o bastante para a tabela de exemplo.
-_deadline = time.time() + 600
+# abaixo. Timeout de 20min (ajustado ao vivo — refreshes observados entre ~5 e ~14min,
+# provavelmente por provisionamento de compute serverless na Free Edition).
+_deadline = time.time() + 1200
 while refresh_info.state in (MonitorRefreshInfoState.PENDING, MonitorRefreshInfoState.RUNNING):
     if time.time() > _deadline:
-        raise TimeoutError(f"monitor refresh for '{config.target_table}' did not finish within 600s")
+        raise TimeoutError(f"monitor refresh for '{config.target_table}' did not finish within 1200s")
     time.sleep(15)
     refresh_info = client.quality_monitors.get_refresh(
         table_name=config.target_table, refresh_id=refresh_info.refresh_id
