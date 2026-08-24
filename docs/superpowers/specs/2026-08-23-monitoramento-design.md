@@ -21,6 +21,21 @@ Edition — o usuário decidiu apostar nele mesmo assim (seção 6), em vez de u
 estatístico próprio, aceitando o risco de precisar redesenhar essa parte específica na
 implementação.
 
+## 1.1 Emenda (2026-08-23, durante o design da arquitetura de plataforma)
+
+Uma decisão de arquitetura cross-cutting (documentada em
+[`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform)), tomada
+imediatamente depois deste spec, reverteu a premissa de que domínios reais vivem
+dentro deste repositório. `monitoring-platform` passa a ser um **framework puro** — só
+a lib e uma pasta `examples/` não-produtiva (harness de integração), no lugar de
+`dominios/<domínio>/`. O contrato `MonitoringConfig` não muda (`domain` já era um
+campo explícito da dataclass, nunca inferido).
+
+Domínios reais passam a viver em repositórios próprios, instalando este pacote via
+`pip install git+https://github.com/ViniciusOtoni/monitoring-platform@vX.Y.Z` (tag
+semver, versionamento manual). O `.github/workflows/deploy.yml` passa a ser um caller
+fino do reusable workflow centralizado em `mlops-platform`.
+
 ## 2. Achado que motivou emendar o Componente 3
 
 Monitorar drift de predições ("model drift", metade do pedido original) exige
@@ -110,9 +125,9 @@ em produção.
 `threshold` é um escalar único aplicado a todas as colunas em `columns` — não há
 granularidade por coluna no v1.
 
-Instâncias são declaradas em `dominios/<domínio>/monitoring_configs.py`, mesma
-convenção de pastas dos outros três repositórios, registradas via
-`register_monitoring_config(config)`.
+Instâncias são declaradas em repositórios de domínio próprios (emenda 1.1) — este
+repositório só fornece a lib. Um `monitoring_configs.py` de exemplo, não-produtivo,
+vive em `examples/`, registrado via `register_monitoring_config(config)`.
 
 ## 6. Mecânica: Lakehouse Monitoring nativo (risco aceito)
 

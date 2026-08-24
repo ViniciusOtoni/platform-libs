@@ -8,6 +8,14 @@
 
 **Tech Stack:** Python 3.11, `databricks-sdk` (Lakehouse Monitoring / `quality_monitors`), PySpark + Delta (runtime Databricks serverless), Databricks Asset Bundles, pytest, GitHub Actions.
 
+**Emenda (2026-08-23, durante o design da arquitetura de plataforma):** este
+repositório passou a ser um framework puro — `dominios/exemplo/` foi renomeada para
+`examples/` (mesmo papel de harness de integração, não domínio real). O contrato
+`MonitoringConfig` não muda (`domain` já era um campo explícito). O
+`.github/workflows/deploy.yml` (Task 10) passou a ser um caller do reusable workflow
+centralizado em `mlops-platform`. Ver
+`docs/superpowers/specs/2026-08-23-monitoramento-design.md`, seção 1.1.
+
 ---
 
 ## Scope Check
@@ -36,10 +44,9 @@ monitoring-platform/
 │       ├── central_table.py    # build_drift_metric_row + write_drift_metrics (Spark)
 │       ├── audit.py            # RunRecord/to_row/write_run (duplicado dos outros componentes)
 │       └── resource_gen.py     # gera 1 job (com schedule próprio) por MonitoringConfig
-├── dominios/
-│   └── exemplo/
-│       ├── __init__.py
-│       └── monitoring_configs.py
+├── examples/
+│   ├── __init__.py
+│   └── monitoring_configs.py   # não-produtivo
 ├── notebooks/
 │   └── evaluate_drift.py       # cria/atualiza o monitor LHM, avalia, centraliza, audita
 ├── scripts/
@@ -922,20 +929,20 @@ testado. Se a API tiver mudado, ajuste esta implementação; o restante do compo
 (contrato, tabela central, filosofia de sugestão) não muda.
 
 **Files:**
-- Create: `dominios/exemplo/__init__.py`
-- Create: `dominios/exemplo/monitoring_configs.py`
+- Create: `examples/__init__.py`
+- Create: `examples/monitoring_configs.py`
 - Create: `notebooks/evaluate_drift.py`
 - Create: `databricks.yml`
 - Create: `scripts/generate_resources.py`
 
-- [ ] **Step 1: Criar o domínio de exemplo**
+- [ ] **Step 1: Criar o exemplo não-produtivo**
 
 ```python
-# dominios/exemplo/__init__.py
+# examples/__init__.py
 ```
 
 ```python
-# dominios/exemplo/monitoring_configs.py
+# examples/monitoring_configs.py
 from monitoring_platform.contract import MonitoringConfig, register_monitoring_config
 
 feature_drift = MonitoringConfig(
@@ -973,7 +980,7 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
-import dominios.exemplo.monitoring_configs  # noqa: F401
+import examples.monitoring_configs  # noqa: F401
 from datetime import date, datetime
 
 from databricks.sdk import WorkspaceClient
@@ -1133,7 +1140,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import dominios.exemplo.monitoring_configs  # noqa: F401
+import examples.monitoring_configs  # noqa: F401
 from monitoring_platform.resource_gen import write_resources
 
 if __name__ == "__main__":
@@ -1157,13 +1164,13 @@ uma task `evaluate_drift`; `validate` sem erros de estrutura.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add dominios/ notebooks/ databricks.yml scripts/generate_resources.py resources/.gitkeep
-git commit -m "feat: add example domain, evaluate_drift notebook, and DAB bundle root"
+git add examples/ notebooks/ databricks.yml scripts/generate_resources.py resources/.gitkeep
+git commit -m "feat: add non-productive example, evaluate_drift notebook, and DAB bundle root"
 ```
 
 ---
 
-## Task 10: GitHub Actions — deploy com tracking de commit/branch
+## Task 10: GitHub Actions — caller do reusable workflow (`mlops-platform`)
 
 **Files:**
 - Create: `.github/workflows/deploy.yml`
@@ -1172,7 +1179,7 @@ git commit -m "feat: add example domain, evaluate_drift notebook, and DAB bundle
 
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy monitoring-platform
+name: Deploy
 
 on:
   push:
@@ -1180,44 +1187,21 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Run unit tests
-        run: pytest
-
-      - name: Generate resources
-        run: python scripts/generate_resources.py
-
-      - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
-
-      - name: Deploy bundle
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks bundle deploy -t dev \
-            --var="git_commit=${{ github.sha }}" \
-            --var="git_branch=${{ github.ref_name }}"
+    uses: ViniciusOtoni/mlops-platform/.github/workflows/deploy-bundle.yml@main
+    with:
+      working-directory: .
+    secrets: inherit
 ```
 
-- [ ] **Step 2: Confirmar os secrets `DATABRICKS_HOST`/`DATABRICKS_TOKEN` no GitHub.**
+- [ ] **Step 2: Confirmar os secrets `DATABRICKS_HOST`/`DATABRICKS_TOKEN` **neste
+  repositório** (`secrets: inherit` propaga os secrets do repositório chamador, não os
+  do `mlops-platform`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/deploy.yml
-git commit -m "ci: deploy bundle on push to main with git commit/branch tracking"
+git commit -m "ci: call mlops-platform's shared deploy-bundle reusable workflow"
 ```
 
 ---
@@ -1257,6 +1241,12 @@ config = MonitoringConfig(
 )
 register_monitoring_config(config)
 ```
+
+Este repositório é um framework puro — não é onde domínios reais declaram seus
+monitoramentos. Instale este pacote no repositório do seu domínio
+(`pip install git+https://github.com/ViniciusOtoni/monitoring-platform@vX.Y.Z`) e
+declare o módulo lá. Convenção completa em
+[`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform).
 
 ## Local (sem Spark)
 
