@@ -18,6 +18,22 @@ validação (comparação entre hiperparametrizações) e o teste.
 O design foi produzido via interview em rounds (skill `grilling`), com cada decisão
 aprovada explicitamente pelo usuário antes de avançar.
 
+## 1.1 Emenda (2026-08-23, durante o design da arquitetura de plataforma)
+
+Uma decisão de arquitetura cross-cutting (documentada em
+[`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform)) reverteu a
+premissa de que domínios reais vivem dentro deste repositório. `training-platform`
+passa a ser um **framework puro** — só a lib e uma pasta `examples/` não-produtiva
+(harness de integração), no lugar de `dominios/<domínio>/`. Diferente do
+`feature-platform`, aqui não havia inferência de domínio a partir do caminho da
+pasta — `TrainingConfig.domain` já era um campo explícito da dataclass — então esta
+emenda é só de organização de pastas e de CI, sem mudança de contrato.
+
+Domínios reais passam a viver em repositórios próprios, instalando este pacote via
+`pip install git+https://github.com/ViniciusOtoni/training-platform@vX.Y.Z` (tag
+semver, versionamento manual). O `.github/workflows/deploy.yml` passa a ser um caller
+fino do reusable workflow centralizado em `mlops-platform`.
+
 ## 2. Escopo
 
 **Dentro do escopo:**
@@ -86,8 +102,9 @@ flowchart TB
 
 ## 4. Contrato (`TrainingConfig`)
 
-Uma dataclass Python, instanciada pelo usuário em
-`dominios/<domínio>/training_configs.py` — mesma convenção de pastas do `feature-platform`.
+Uma dataclass Python, instanciada num repositório de domínio (emenda 1.1) — este
+repositório só fornece a lib. Um `training_configs.py` de exemplo, não-produtivo, vive
+em `examples/` só para provar o fluxo ponta a ponta.
 
 ```python
 from dataclasses import dataclass, field

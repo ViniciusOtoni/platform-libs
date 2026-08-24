@@ -4,9 +4,17 @@
 
 **Goal:** Implementar o framework `training_platform`: contrato `TrainingConfig`, split temporal, comparação de hiperparâmetros via holdout de validação, pipeline com transformações custom, pyfunc sobrescrevível, gate de sanidade, registro no Unity Catalog com `FeatureLookup` embarcado, e auditoria reaproveitando o schema do `feature-platform`.
 
-**Architecture:** Lógica pura (contrato, split, seleção de melhor hiperparametrização, gate de sanidade, nomenclatura, construção do `Pipeline`) em `src/training_platform/`, testável localmente com `pytest`, sem Spark. Quatro notebooks Databricks sequenciais (`prepare_training_set` → `fit_and_compare_hyperparams` → `select_best_and_test` → `register_model`) fazem a orquestração real, passando estado entre tasks via `dbutils.jobs.taskValues` (resultados pequenos: run id do MLflow, datas, hiperparâmetros escolhidos) e via tabelas Delta de scratch (dados grandes: splits de treino/validação/teste). Um domínio de exemplo prova o fluxo ponta a ponta.
+**Architecture:** Lógica pura (contrato, split, seleção de melhor hiperparametrização, gate de sanidade, nomenclatura, construção do `Pipeline`) em `src/training_platform/`, testável localmente com `pytest`, sem Spark. Quatro notebooks Databricks sequenciais (`prepare_training_set` → `fit_and_compare_hyperparams` → `select_best_and_test` → `register_model`) fazem a orquestração real, passando estado entre tasks via `dbutils.jobs.taskValues` (resultados pequenos: run id do MLflow, datas, hiperparâmetros escolhidos) e via tabelas Delta de scratch (dados grandes: splits de treino/validação/teste). Um exemplo não-produtivo prova o fluxo ponta a ponta.
 
 **Tech Stack:** Python 3.11, scikit-learn, MLflow (Feature Engineering client), PySpark + Delta (runtime Databricks serverless), Databricks Asset Bundles, pytest, GitHub Actions.
+
+**Emenda (2026-08-23, durante o design da arquitetura de plataforma):** este
+repositório passou a ser um framework puro — `dominios/exemplo/` foi renomeada para
+`examples/` (mesmo papel de harness de integração, não domínio real). O contrato
+`TrainingConfig` não muda (já tinha `domain` como campo explícito). O
+`.github/workflows/deploy.yml` (Task 11) passou a ser um caller do reusable workflow
+centralizado em `mlops-platform`. Ver
+`docs/superpowers/specs/2026-08-23-treino-design.md`, seção 1.1.
 
 ---
 
@@ -36,10 +44,9 @@ training-platform/
 │       ├── pipeline.py          # monta sklearn.Pipeline (custom_transforms + estimador)
 │       ├── pyfunc_model.py      # FeaturePlatformModel (default do pyfunc)
 │       └── audit.py             # RunRecord/to_row/write_run (duplicado do feature-platform)
-├── dominios/
-│   └── exemplo/
-│       ├── __init__.py
-│       └── training_configs.py  # TrainingConfig de exemplo, prova o fluxo ponta a ponta
+├── examples/
+│   ├── __init__.py
+│   └── training_configs.py     # TrainingConfig de exemplo (não-produtivo), prova o fluxo ponta a ponta
 ├── notebooks/
 │   ├── prepare_training_set.py
 │   ├── fit_and_compare_hyperparams.py
@@ -972,8 +979,8 @@ Dados grandes (splits de treino/validação/teste) trafegam via tabelas Delta de
 `<catalog>.training_scratch.<model_name>_train` / `_val` / `_test`.
 
 **Files:**
-- Create: `dominios/exemplo/__init__.py`
-- Create: `dominios/exemplo/training_configs.py`
+- Create: `examples/__init__.py`
+- Create: `examples/training_configs.py`
 - Create: `notebooks/prepare_training_set.py`
 - Create: `notebooks/fit_and_compare_hyperparams.py`
 - Create: `notebooks/select_best_and_test.py`
@@ -981,14 +988,14 @@ Dados grandes (splits de treino/validação/teste) trafegam via tabelas Delta de
 - Create: `databricks.yml`
 - Create: `resources/training_pipeline.job.yml`
 
-- [ ] **Step 1: Criar o domínio de exemplo**
+- [ ] **Step 1: Criar o exemplo não-produtivo**
 
 ```python
-# dominios/exemplo/__init__.py
+# examples/__init__.py
 ```
 
 ```python
-# dominios/exemplo/training_configs.py
+# examples/training_configs.py
 from sklearn.ensemble import RandomForestClassifier
 
 from training_platform.contract import FeatureLookupSpec, TrainingConfig, register_training_config
@@ -1030,7 +1037,7 @@ dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
 # COMMAND ----------
-import dominios.exemplo.training_configs  # noqa: F401
+import examples.training_configs  # noqa: F401
 import pyspark.sql.functions as F
 import mlflow
 
@@ -1110,7 +1117,7 @@ dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
 # COMMAND ----------
-import dominios.exemplo.training_configs  # noqa: F401
+import examples.training_configs  # noqa: F401
 import json
 import mlflow
 from sklearn.metrics import get_scorer
@@ -1163,7 +1170,7 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
-import dominios.exemplo.training_configs  # noqa: F401
+import examples.training_configs  # noqa: F401
 import json
 from datetime import date, datetime
 import mlflow
@@ -1251,7 +1258,7 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
-import dominios.exemplo.training_configs  # noqa: F401
+import examples.training_configs  # noqa: F401
 import json
 from datetime import date, datetime
 import mlflow
@@ -1427,13 +1434,18 @@ notebooks).
 - [ ] **Step 9: Commit**
 
 ```bash
-git add dominios/ notebooks/ databricks.yml resources/
-git commit -m "feat: add example domain, 4-stage notebooks, and DAB bundle root"
+git add examples/ notebooks/ databricks.yml resources/
+git commit -m "feat: add non-productive example, 4-stage notebooks, and DAB bundle root"
 ```
 
 ---
 
-## Task 11: GitHub Actions — deploy com tracking de commit/branch
+## Task 11: GitHub Actions — caller do reusable workflow (`mlops-platform`)
+
+**Emenda (arquitetura de plataforma):** este repositório não tem
+`scripts/generate_resources.py` (o job de treino é fixo, não gerado dinamicamente —
+ver spec, seção 7), então o reusable workflow simplesmente pula a etapa de geração de
+resources, sem precisar de configuração extra aqui.
 
 **Files:**
 - Create: `.github/workflows/deploy.yml`
@@ -1442,7 +1454,7 @@ git commit -m "feat: add example domain, 4-stage notebooks, and DAB bundle root"
 
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy training-platform
+name: Deploy
 
 on:
   push:
@@ -1450,44 +1462,22 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Run unit tests
-        run: pytest
-
-      - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
-
-      - name: Deploy bundle
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks bundle deploy -t dev \
-            --var="git_commit=${{ github.sha }}" \
-            --var="git_branch=${{ github.ref_name }}"
+    uses: ViniciusOtoni/mlops-platform/.github/workflows/deploy-bundle.yml@main
+    with:
+      working-directory: .
+    secrets: inherit
 ```
 
 - [ ] **Step 2: Confirmar manualmente no GitHub** (`Settings > Secrets and variables >
-  Actions`) que `DATABRICKS_HOST` e `DATABRICKS_TOKEN` estão configurados (mesmos
-  secrets já usados no `feature-platform`, podem ser os mesmos valores se for o mesmo
-  workspace).
+  Actions`) que `DATABRICKS_HOST` e `DATABRICKS_TOKEN` estão configurados **neste
+  repositório** — `secrets: inherit` propaga os secrets do repositório chamador, não
+  os do `mlops-platform`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/deploy.yml
-git commit -m "ci: deploy bundle on push to main with git commit/branch tracking"
+git commit -m "ci: call mlops-platform's shared deploy-bundle reusable workflow"
 ```
 
 ---
@@ -1532,8 +1522,11 @@ config = TrainingConfig(
 register_training_config(config)
 ```
 
-Coloque o módulo em `dominios/<seu_domínio>/training_configs.py`. O modelo é
-registrado como `<catalog>.<seu_domínio>_models.<model_name>`.
+Este repositório é um framework puro — não é onde domínios reais declaram seus
+treinos. Instale este pacote no repositório do seu domínio
+(`pip install git+https://github.com/ViniciusOtoni/training-platform@vX.Y.Z`) e
+declare o módulo lá. O modelo é registrado como `<catalog>.<domain>_models.<model_name>`.
+Convenção completa em [`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform).
 
 ## Local (sem Spark)
 
