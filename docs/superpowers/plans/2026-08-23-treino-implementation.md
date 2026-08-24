@@ -780,6 +780,23 @@ git commit -m "feat: build sklearn Pipeline with custom transforms before the es
 
 ## Task 8: Pyfunc default (`pyfunc_model.py`)
 
+> **Correção (2026-08-24, achada indiretamente — verificando o `serving-platform`,
+> depois de já ter corrigido o `code_paths` acima):** `fe.score_batch()` resolve o
+> `FeatureLookup` e monta um DataFrame com **todas** as colunas — chave de entidade
+> (`customer_id`), chave de timestamp (`reference_date`) e as features resolvidas — e
+> passa esse DataFrame inteiro para `predict()`. Mas o modelo interno foi treinado só
+> em `feature_cols` (Task 10/12, excluindo `label_column` e os `lookup_key`) — um
+> schema mais estreito. O sklearn rejeitava a chamada com
+> `ValueError: The feature names should match those that were passed during fit.
+> Feature names unseen at fit time: customer_id, reference_date`. Corrigido filtrando
+> `model_input` para as colunas que o modelo realmente viu no fit, usando
+> `feature_names_in_` (atributo padrão do sklearn, preenchido automaticamente quando
+> `.fit()` recebe um DataFrame com colunas nomeadas — reflete exatamente `feature_cols`
+> na mesma ordem). Isso também reordena as colunas para bater com a ordem de fit, caso
+> `fe.score_batch` as entregue em ordem diferente. Só afeta o `FeaturePlatformModel`
+> default — um `pyfunc_model_class` customizado do usuário assume essa responsabilidade
+> sozinho, por design (mesmo princípio de resiliência/sobrescrita do componente).
+
 **Files:**
 - Create: `src/training_platform/pyfunc_model.py`
 - Test: `tests/test_pyfunc_model.py`
@@ -789,18 +806,37 @@ git commit -m "feat: build sklearn Pipeline with custom transforms before the es
 ```python
 # tests/test_pyfunc_model.py
 import numpy as np
+import pandas as pd
 
 from training_platform.pyfunc_model import FeaturePlatformModel
 
 
 class _FakeSklearnModel:
+    feature_names_in_ = ["txn_count", "avg_ticket"]
+
     def predict_proba(self, X):
+        assert list(X.columns) == list(self.feature_names_in_)
         return np.array([[0.9, 0.1], [0.2, 0.8]])
 
 
 def test_predict_returns_positive_class_probability():
     wrapped = FeaturePlatformModel(_FakeSklearnModel())
-    result = wrapped.predict(context=None, model_input=None)
+    model_input = pd.DataFrame({"txn_count": [3, 5], "avg_ticket": [10.0, 20.0]})
+    result = wrapped.predict(context=None, model_input=model_input)
+    assert list(result) == [0.1, 0.8]
+
+
+def test_predict_filters_and_reorders_columns_unseen_at_fit_time():
+    wrapped = FeaturePlatformModel(_FakeSklearnModel())
+    model_input = pd.DataFrame(
+        {
+            "customer_id": ["c1", "c2"],
+            "reference_date": ["2026-08-24", "2026-08-24"],
+            "avg_ticket": [10.0, 20.0],
+            "txn_count": [3, 5],
+        }
+    )
+    result = wrapped.predict(context=None, model_input=model_input)
     assert list(result) == [0.1, 0.8]
 ```
 
@@ -824,13 +860,18 @@ class FeaturePlatformModel(mlflow.pyfunc.PythonModel):
         self.model = model
 
     def predict(self, context, model_input, params=None):
+        # fe.score_batch entrega model_input com colunas extras (chave de entidade,
+        # chave de timestamp) que o modelo não viu no fit — feature_names_in_ (padrão
+        # do sklearn, preenchido ao fitar com um DataFrame nomeado) filtra e reordena
+        # para o schema exato de fit.
+        model_input = model_input[self.model.feature_names_in_]
         return self.model.predict_proba(model_input)[:, 1]
 ```
 
 - [ ] **Step 4: Rodar e confirmar sucesso**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_pyfunc_model.py -v`
-Expected: `1 passed`
+Expected: `2 passed`
 
 - [ ] **Step 5: Commit**
 
