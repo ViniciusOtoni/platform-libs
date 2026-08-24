@@ -1066,6 +1066,18 @@ register_training_config(config)
 
 - [ ] **Step 2: Criar `notebooks/prepare_training_set.py`**
 
+> **Correção (achado ao vivo, Task 13 — pipeline completo rodando pela primeira vez):**
+> `create_training_set(..., exclude_columns=[config.reference_date_column])` remove
+> `reference_date` do `master` retornado por `load_df()` — mas o cálculo do split (logo
+> abaixo, via `master_with_split = master.withColumn("_split", F.when(F.col(config.reference_date_column) <= ...))`)
+> precisa dessa coluna, e falhava com
+> `UNRESOLVED_COLUMN.WITH_SUGGESTION: reference_date cannot be resolved`. Corrigido
+> removendo `exclude_columns` da chamada (mantendo `reference_date` em `master` até
+> depois do split) e adicionando `config.reference_date_column` ao `.drop(...)` que já
+> remove `_split` antes de escrever as tabelas de split — preserva a intenção original
+> (a coluna não deve vazar como feature nas tabelas `train`/`val`/`test`), só adiando a
+> remoção para depois de ela ser usada.
+
 > **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
 > com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
 > o `.venv` local, não o runtime remoto. O job falhou com
@@ -1130,7 +1142,6 @@ training_set = fe.create_training_set(
     df=spine,
     feature_lookups=feature_lookups,
     label=config.label_column,
-    exclude_columns=[config.reference_date_column],
 )
 master = training_set.load_df()
 
@@ -1156,7 +1167,7 @@ scratch_prefix = f"{scratch_schema}.{model_name}"
 for split_name in ["train", "val", "test"]:
     (
         master_with_split.filter(F.col("_split") == split_name)
-        .drop("_split")
+        .drop("_split", config.reference_date_column)
         .write.format("delta")
         .mode("overwrite")
         .saveAsTable(f"{scratch_prefix}_{split_name}")
