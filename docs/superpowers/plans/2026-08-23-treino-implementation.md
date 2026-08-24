@@ -1132,6 +1132,30 @@ register_training_config(config)
 > ```
 > substitui a linha única `test_metric = float(scorer(pipeline, X_test, y_test))`.
 
+> **Correção (achado na revisão final de branch, não ao vivo — mesma raiz do fix
+> anterior):** `fit_and_compare_hyperparams.py` tinha o mesmo risco de crash não tratado
+> — `metric_value = float(scorer(pipeline, X_val, y_val))` sem guarda. Como
+> `compute_split_dates` usa arredondamento sobre o número de datas distintas, um
+> `spine_table` com poucas datas distintas pode produzir um bucket de `val` vazio (não
+> só `test`) — ex.: com `n=1` data distinta, `train_end == val_end` e o bucket de `val`
+> fica vazio. Diferente do bug em `select_best_and_test.py`, este roda **antes** de
+> qualquer escrita de auditoria no pipeline (só `select_best_and_test.py` e
+> `register_model.py` chamam `write_run`) — um crash aqui derruba o job sem nenhuma
+> linha em `platform_audit.pipeline_runs`, quebrando a garantia de trilha de auditoria
+> que é o propósito do gate. Corrigido com a mesma guarda:
+> ```python
+> if len(X_val) > 0:
+>     metric_value = float(scorer(pipeline, X_val, y_val))
+> else:
+>     metric_value = float("nan")
+> ```
+> substitui a linha única `metric_value = float(scorer(pipeline, X_val, y_val))`. O
+> `NaN` resultante flui como métrica normal até `select_best` (que não quebra em
+> comparações com `NaN`, só se comporta de forma não-determinística ao escolher o
+> "melhor") e, na pior hipótese, até o gate de sanidade em `select_best_and_test.py`, que
+> tem a garantia final de capturar e gravar `FAILED` — preservado o princípio de que o
+> pipeline nunca crasha sem deixar rastro de auditoria.
+
 > **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
 > com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
 > o `.venv` local, não o runtime remoto. O job falhou com
@@ -1293,7 +1317,10 @@ with mlflow.start_run(run_id=mlflow_run_id):
             estimator = config.algorithm(**hyperparams)
             pipeline = build_pipeline(config.custom_transforms, estimator)
             pipeline.fit(X_train, y_train)
-            metric_value = float(scorer(pipeline, X_val, y_val))
+            if len(X_val) > 0:
+                metric_value = float(scorer(pipeline, X_val, y_val))
+            else:
+                metric_value = float("nan")
             mlflow.log_params(hyperparams)
             mlflow.log_metric(metric_name, metric_value)
             results.append({"hyperparameters": hyperparams, "metric": metric_value})
