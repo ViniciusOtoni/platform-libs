@@ -46,10 +46,12 @@ def run_feature_table(
     git_branch: str,
     backfill_start: str | None = None,
     backfill_end: str | None = None,
+    database_instance_name: str = "",
 ) -> None:
     """Orquestra uma execução completa: resolve janela, computa, aplica o gate de
     qualidade, escreve (se passar), audita e sincroniza online (se configurado).
-    Requer SparkSession real — exercitado via notebook (Task 12), não via pytest."""
+    Requer SparkSession real — exercitado via notebook (Task 12), não via pytest.
+    database_instance_name só é usado (e obrigatório) quando spec.online=True."""
     window = resolve_window(spec, mode, today, backfill_start, backfill_end, spark)
     sources = {name: spark.table(name) for name in spec.sources}
     result_df = spec.compute_fn(sources, window)
@@ -109,4 +111,4 @@ def run_feature_table(
     if spec.online:
         from .online_sync import sync_online_table
 
-        sync_online_table(spark, table_name, spec.entity_keys)
+        sync_online_table(spark, table_name, spec.entity_keys, database_instance_name)
