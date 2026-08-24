@@ -1,5 +1,5 @@
 # Databricks notebook source
-# MAGIC %pip install databricks-feature-engineering
+# MAGIC %pip install databricks-feature-engineering "mlflow>=3.15.0"
 
 # COMMAND ----------
 dbutils.library.restartPython()
