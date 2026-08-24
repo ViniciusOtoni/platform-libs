@@ -4,9 +4,19 @@
 
 **Goal:** Implementar o framework `feature_platform` que permite declarar feature tables via decorator, executá-las em modo incremental ou backfill com checkpointing automático, aplicar um gate de qualidade bloqueante, gerar o job DAB automaticamente, registrar toda execução numa tabela de auditoria central e sincronizar opcionalmente com o Online Feature Store (Lakebase).
 
-**Architecture:** Lógica pura (contrato/registro, nomenclatura, resolução de janela, checks de qualidade, geração de resource YAML) vive em `src/feature_platform/`, testável localmente com `pytest`, sem Spark — mesmo padrão já validado na POC `databricks-feature-lookup-poc`. A camada que fala com Spark/Delta/Lakebase (merge, overwrite, leitura/escrita da tabela de auditoria, sync online) fica isolada em funções específicas dentro dos mesmos módulos, exercitadas via notebook (`notebooks/run_feature_table.py`) rodando num job Databricks real — não em pytest. Um domínio de exemplo (`dominios/exemplo/`) prova o fluxo ponta a ponta.
+**Architecture:** Lógica pura (contrato/registro, nomenclatura, resolução de janela, checks de qualidade, geração de resource YAML) vive em `src/feature_platform/`, testável localmente com `pytest`, sem Spark — mesmo padrão já validado na POC `databricks-feature-lookup-poc`. A camada que fala com Spark/Delta/Lakebase (merge, overwrite, leitura/escrita da tabela de auditoria, sync online) fica isolada em funções específicas dentro dos mesmos módulos, exercitadas via notebook (`notebooks/run_feature_table.py`) rodando num job Databricks real — não em pytest. Um exemplo não-produtivo (`examples/`) prova o fluxo ponta a ponta.
 
 **Tech Stack:** Python 3.11, PySpark + Delta Lake (runtime Databricks serverless), Databricks SDK, Databricks Asset Bundles, pytest, pandas, PyYAML, GitHub Actions.
+
+**Emenda (2026-08-23, durante o design da arquitetura de plataforma):** este
+repositório passou a ser um framework puro — sem pastas de domínio real dentro dele.
+`dominios/exemplo/` foi renomeada para `examples/` (mesmo papel: harness de teste de
+integração, não domínio de negócio real), e o decorator `@feature_table` ganhou um
+parâmetro `domain` **explícito e obrigatório** (a inferência automática pelo caminho
+`dominios/<domínio>/` não faz mais sentido sem essa pasta). O
+`.github/workflows/deploy.yml` (Task 11) passou a ser um caller do reusable workflow
+centralizado em `mlops-platform`. Ver
+`docs/superpowers/specs/2026-08-23-geracao-de-features-design.md`, seção 1.1.
 
 ---
 
@@ -42,10 +52,9 @@ feature-platform/
 │       └── online_sync.py                  # sync opcional para Lakebase (Spark/SDK)
 ├── scripts/
 │   └── generate_resources.py               # CLI: roda resource_gen antes do bundle deploy
-├── dominios/
-│   └── exemplo/
-│       ├── __init__.py
-│       └── features.py                     # feature table de exemplo, prova o fluxo ponta a ponta
+├── examples/
+│   ├── __init__.py
+│   └── features.py                         # feature table de exemplo (não-produtiva), prova o fluxo ponta a ponta
 ├── notebooks/
 │   └── run_feature_table.py                # entrypoint Databricks: le widgets, chama engine.run_feature_table
 ├── resources/
@@ -620,12 +629,13 @@ def _reset_registry():
 
 
 def test_feature_table_registers_spec_with_defaults():
-    @feature_table(entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.transactions"])
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.transactions"])
     def minha_feature(sources, window):
         return None
 
     registry = get_registry()
     spec = registry["minha_feature"]
+    assert spec.domain == "exemplo"
     assert spec.entity_keys == ["customer_id"]
     assert spec.timestamp_key == "feature_ts"
     assert spec.sources == ["raw.transactions"]
@@ -635,43 +645,23 @@ def test_feature_table_registers_spec_with_defaults():
     assert spec.compute_fn is minha_feature
 
 
-def test_feature_table_infers_domain_from_module_path(monkeypatch):
-    def fake_fn(sources, window):
-        return None
-    fake_fn.__name__ = "domain_feature"
-    fake_fn.__module__ = "dominios.credito.features"
-
-    decorator = feature_table(entity_keys=["k"], timestamp_key="ts", sources=[])
-    decorator(fake_fn)
-
-    spec = get_registry()["domain_feature"]
-    assert spec.domain == "credito"
-
-
-def test_feature_table_defaults_domain_when_not_under_dominios():
-    def fake_fn(sources, window):
-        return None
-    fake_fn.__name__ = "loose_feature"
-    fake_fn.__module__ = "some.other.module"
-
-    decorator = feature_table(entity_keys=["k"], timestamp_key="ts", sources=[])
-    decorator(fake_fn)
-
-    spec = get_registry()["loose_feature"]
-    assert spec.domain == "default"
+def test_feature_table_requires_domain():
+    with pytest.raises(TypeError):
+        feature_table(entity_keys=["k"], timestamp_key="ts", sources=[])
 
 
 def test_feature_table_rejects_duplicate_registration():
-    @feature_table(entity_keys=["k"], timestamp_key="ts", sources=[])
+    @feature_table(domain="exemplo", entity_keys=["k"], timestamp_key="ts", sources=[])
     def duplicada(sources, window):
         return None
 
     with pytest.raises(ValueError, match="already registered"):
-        feature_table(entity_keys=["k"], timestamp_key="ts", sources=[])(duplicada)
+        feature_table(domain="exemplo", entity_keys=["k"], timestamp_key="ts", sources=[])(duplicada)
 
 
 def test_feature_table_accepts_online_and_depends_on_and_table_name():
     @feature_table(
+        domain="exemplo",
         entity_keys=["customer_id"],
         timestamp_key="feature_ts",
         sources=["raw.transactions"],
@@ -717,17 +707,9 @@ class FeatureTableSpec:
 _REGISTRY: dict[str, FeatureTableSpec] = {}
 
 
-def _infer_domain(module_path: str) -> str:
-    parts = module_path.split(".")
-    if "dominios" in parts:
-        idx = parts.index("dominios")
-        if idx + 1 < len(parts):
-            return parts[idx + 1]
-    return "default"
-
-
 def feature_table(
     *,
+    domain: str,
     entity_keys: list[str],
     timestamp_key: str,
     sources: list[str],
@@ -742,7 +724,7 @@ def feature_table(
             timestamp_key=timestamp_key,
             sources=list(sources),
             compute_fn=fn,
-            domain=_infer_domain(fn.__module__),
+            domain=domain,
             online=online,
             depends_on=list(depends_on or []),
             table_name=table_name,
@@ -766,7 +748,7 @@ def clear_registry() -> None:
 - [ ] **Step 4: Rodar e confirmar sucesso**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_contract.py -v`
-Expected: `5 passed`
+Expected: `4 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1290,11 +1272,11 @@ def _reset_registry():
 
 
 def test_generate_job_resource_creates_one_task_per_feature_table():
-    @feature_table(entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
     def feature_a(sources, window):
         return None
 
-    @feature_table(entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.b"])
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.b"])
     def feature_b(sources, window):
         return None
 
@@ -1314,11 +1296,12 @@ def test_generate_job_resource_declares_job_parameters():
 
 
 def test_generate_job_resource_adds_depends_on_edge():
-    @feature_table(entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
     def base_feature(sources, window):
         return None
 
     @feature_table(
+        domain="exemplo",
         entity_keys=["customer_id"],
         timestamp_key="feature_ts",
         sources=["raw.b"],
@@ -1335,7 +1318,7 @@ def test_generate_job_resource_adds_depends_on_edge():
 
 
 def test_generate_job_resource_points_notebook_task_to_relative_path():
-    @feature_table(entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
     def feature_a(sources, window):
         return None
 
@@ -1503,32 +1486,33 @@ git commit -m "feat: add Lakebase synced table spec builder for online feature t
 
 ---
 
-## Task 12: Notebook entrypoint, domínio de exemplo e bundle DAB
+## Task 12: Notebook entrypoint, exemplo não-produtivo e bundle DAB
 
 Esta task não tem TDD (é glue code + configuração), mas tem passos de verificação
 concretos rodando no workspace Databricks Free Edition.
 
 **Files:**
-- Create: `dominios/exemplo/__init__.py`
-- Create: `dominios/exemplo/features.py`
+- Create: `examples/__init__.py`
+- Create: `examples/features.py`
 - Create: `notebooks/run_feature_table.py`
 - Create: `databricks.yml`
 - Create: `scripts/generate_resources.py`
 
-- [ ] **Step 1: Criar o domínio de exemplo**
+- [ ] **Step 1: Criar o exemplo não-produtivo**
 
 ```python
-# dominios/exemplo/__init__.py
+# examples/__init__.py
 ```
 
 ```python
-# dominios/exemplo/features.py
+# examples/features.py
 import pyspark.sql.functions as F
 
 from feature_platform.contract import feature_table
 
 
 @feature_table(
+    domain="exemplo",
     entity_keys=["customer_id"],
     timestamp_key="feature_ts",
     sources=["raw.transactions"],
@@ -1561,7 +1545,7 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
-import dominios.exemplo.features  # noqa: F401  (import dispara o registro via decorator)
+import examples.features  # noqa: F401  (import dispara o registro via decorator)
 from datetime import date
 
 from feature_platform.contract import get_registry
@@ -1605,7 +1589,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import dominios.exemplo.features  # noqa: F401  (importa todos os domínios para popular o registro)
+import examples.features  # noqa: F401  (importa o exemplo para popular o registro)
 from feature_platform.resource_gen import write_job_resource
 
 if __name__ == "__main__":
@@ -1663,13 +1647,19 @@ código, só valida a estrutura do bundle.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add dominios/ notebooks/ databricks.yml scripts/generate_resources.py resources/.gitkeep
-git commit -m "feat: add example domain, notebook entrypoint, and DAB bundle root"
+git add examples/ notebooks/ databricks.yml scripts/generate_resources.py resources/.gitkeep
+git commit -m "feat: add non-productive example, notebook entrypoint, and DAB bundle root"
 ```
 
 ---
 
-## Task 13: GitHub Actions — deploy com tracking de commit/branch
+## Task 13: GitHub Actions — caller do reusable workflow (`mlops-platform`)
+
+**Emenda (arquitetura de plataforma):** este repositório não mantém mais um workflow
+de deploy inline — ele chama o reusable workflow centralizado em `mlops-platform`,
+que roda testes, gera resources (se existir `scripts/generate_resources.py`, que é o
+caso aqui) e faz `bundle deploy`, tudo num lugar só reaproveitado pelos quatro
+componentes.
 
 **Files:**
 - Create: `.github/workflows/deploy.yml`
@@ -1678,7 +1668,7 @@ git commit -m "feat: add example domain, notebook entrypoint, and DAB bundle roo
 
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy feature-platform
+name: Deploy
 
 on:
   push:
@@ -1686,44 +1676,22 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dev dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Run unit tests
-        run: pytest
-
-      - name: Generate job resources
-        run: python scripts/generate_resources.py
-
-      - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
-
-      - name: Deploy bundle
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks bundle deploy -t dev \
-            --var="git_commit=${{ github.sha }}" \
-            --var="git_branch=${{ github.ref_name }}"
+    uses: ViniciusOtoni/mlops-platform/.github/workflows/deploy-bundle.yml@main
+    with:
+      working-directory: .
+    secrets: inherit
 ```
 
-- [ ] **Step 2: Documentar os secrets necessários no README (Task 14) e confirmar manualmente no GitHub** (`Settings > Secrets and variables > Actions`): `DATABRICKS_HOST`, `DATABRICKS_TOKEN`.
+- [ ] **Step 2: Confirmar manualmente no GitHub** (`Settings > Secrets and variables >
+  Actions`) que `DATABRICKS_HOST` e `DATABRICKS_TOKEN` estão configurados **neste
+  repositório** — `secrets: inherit` propaga os secrets do repositório chamador, não
+  os do `mlops-platform`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/deploy.yml
-git commit -m "ci: deploy bundle on push to main with git commit/branch tracking"
+git commit -m "ci: call mlops-platform's shared deploy-bundle reusable workflow"
 ```
 
 ---
@@ -1752,6 +1720,7 @@ Design completo em
 from feature_platform.contract import feature_table
 
 @feature_table(
+    domain="credito",
     entity_keys=["customer_id"],
     timestamp_key="feature_ts",
     sources=["raw.transactions"],
@@ -1761,8 +1730,12 @@ def customer_transaction_features(sources, window):
     ...
 ```
 
-Coloque o módulo em `dominios/<seu_domínio>/`. O nome da tabela é derivado
-automaticamente como `<catalog>.<seu_domínio>_features.<nome_da_função>`.
+Este repositório é um framework puro — não é onde domínios reais declaram suas
+features. Instale este pacote no repositório do seu domínio
+(`pip install git+https://github.com/ViniciusOtoni/feature-platform@vX.Y.Z`) e declare
+o módulo lá. O nome da tabela é derivado automaticamente como
+`<catalog>.<domain>_features.<nome_da_função>`. Convenção completa em
+[`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform).
 
 ## Local (sem Spark)
 

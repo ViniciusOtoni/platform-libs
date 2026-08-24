@@ -24,6 +24,27 @@ desde 15/01/2026** ([Free Edition limitations](https://docs.databricks.com/aws/e
 O substituto oficial — o **Online Feature Store**, apoiado no **Lakebase** (Postgres
 provisionado/autoscaling) via *synced tables* — está refletido neste design.
 
+## 1.1 Emenda (2026-08-23, durante o design da arquitetura de plataforma)
+
+Depois deste spec aprovado, uma decisão de arquitetura cross-cutting (documentada em
+[`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform)) reverteu a
+premissa da seção 6: este repositório deixa de hospedar pastas de domínio de negócio
+reais. Ele passa a ser um **framework puro** — só a lib, os testes e uma pasta
+`examples/` não-produtiva, usada como harness de integração do próprio framework (não
+mais `dominios/<domínio>/`).
+
+Domínios de negócio reais (ex.: crédito, cobrança) passam a viver em **repositórios
+próprios**, um por domínio, que instalam este pacote via
+`pip install git+https://github.com/ViniciusOtoni/feature-platform@vX.Y.Z` (tag
+semver, versionamento manual) e declaram lá suas feature tables. A seção 6 abaixo é
+atualizada para refletir isso; o restante do spec (contrato, execução, gate de
+qualidade, versionamento, auditoria) não muda em nada — a mudança é só sobre onde o
+código de domínio mora, não sobre como o framework funciona.
+
+O `.github/workflows/deploy.yml` deste repositório passa a ser um caller fino do
+reusable workflow centralizado em `mlops-platform` (`deploy-bundle.yml`), em vez de um
+workflow inline duplicado entre os quatro componentes.
+
 ## 2. Escopo
 
 **Dentro do escopo:**
@@ -77,6 +98,7 @@ A única forma de declarar uma feature table é decorando a função Python que 
 
 ```python
 @feature_table(
+    domain="credito",
     entity_keys=["customer_id"],
     timestamp_key="feature_ts",
     sources=["raw.transactions"],
@@ -96,6 +118,7 @@ def customer_transaction_features(sources: dict[str, DataFrame], window: DateRan
 
 | Parâmetro | Obrigatório | Descrição |
 |---|---|---|
+| `domain` | sim (emenda 1.1) | Nome do domínio de negócio, declarado explicitamente — antes (pré-emenda) era inferido do caminho `dominios/<domínio>/` dentro deste repositório; sem essa pasta, não há mais caminho para inferir de forma confiável, já que cada domínio agora é o próprio repositório. |
 | `entity_keys` | sim | Chave(s) primária(s) da feature table. |
 | `timestamp_key` | sim | Coluna que marca desde quando o valor passou a ser verdade. Exatamente uma, por restrição do Databricks para time series feature tables. |
 | `sources` | sim | Lista de tabelas de origem. O framework resolve cada nome para um `DataFrame` e injeta em `sources` no `compute()` — é isso que dá lineage real (qual tabela bruta alimenta qual feature table). |
@@ -144,14 +167,12 @@ reprocessa a antiga com dado novo por baixo do capô.
 
 ## 6. Repositório e orquestração
 
-`feature-platform` é um monorepo: uma lib/framework Python instalável (contém o
+`feature-platform` é um **framework puro** (emenda 1.1): a lib instalável (contém o
 decorator, o motor de execução, o gerador de resources e os checks de qualidade
-padrão) mais pastas de domínio de negócio (ex.: `dominios/credito/`,
-`dominios/cobranca/`), cada uma contendo os módulos Python com as funções decoradas do
-seu domínio. A estrutura já isola lib de domínio para permitir split futuro em
-multi-repo por domínio sem redesenho — hoje não há ganho nisso (não há múltiplos times
-consumindo em ritmos diferentes), então o monorepo é a escolha correta para o estágio
-atual.
+padrão) mais uma única pasta `examples/`, não-produtiva, usada só para testar o
+framework de ponta a ponta. Domínios de negócio reais (ex.: crédito, cobrança) vivem em
+repositórios próprios, que instalam este pacote via pip (tag semver) e declaram lá
+suas feature tables — ver a convenção completa em `mlops-platform`.
 
 **Um job DAB por repositório**, não por feature table. Um script de geração roda antes
 do `databricks bundle deploy`, varre o registro de decorators (`@feature_table`)
