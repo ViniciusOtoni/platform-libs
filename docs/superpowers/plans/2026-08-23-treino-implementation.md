@@ -1156,6 +1156,28 @@ register_training_config(config)
 > tem a garantia final de capturar e gravar `FAILED` — preservado o princípio de que o
 > pipeline nunca crasha sem deixar rastro de auditoria.
 
+> **Correção (achado na revisão final de branch):** `register_model.py` tinha dois
+> gaps de qualidade:
+> 1. `validate_model_name` (Task 6, `naming.py`) era definida e testada mas nunca
+>    chamada em nenhum lugar do pipeline real — `domain`/`model_name` são texto livre
+>    fornecido por quem escreve o `TrainingConfig`, fora do controle deste framework;
+>    sem a validação, um valor inválido (maiúscula, hífen) só apareceria tarde, como um
+>    erro opaco do Unity Catalog. Corrigido chamando `validate_model_name(full_model_name)`
+>    logo após `derive_model_name(...)`.
+> 2. O `exclude_columns=[config.reference_date_column]` neste `create_training_set` era
+>    um resquício do mesmo padrão corrigido em `prepare_training_set.py` (Correção
+>    acima) — mas aqui é inofensivo (e por isso não achado pela Task 13 ao vivo):
+>    diferente de `prepare_training_set.py`, este `TrainingSet` nunca passa por
+>    `load_df()`, só alimenta `fe.log_model(training_set=...)` para embarcar o
+>    FeatureSpec no artefato — `exclude_columns` só afeta o DataFrame de `load_df()`,
+>    então era um parâmetro morto, visualmente idêntico ao padrão que causou um bug
+>    real em outro lugar. Removido para não confundir leitura futura.
+>
+> O comentário sobre `CREATE SCHEMA IF NOT EXISTS` também foi atualizado: a Task 13
+> confirmou ao vivo que essa linha é necessária (o primeiro registro bem-sucedido
+> precisou criar `exemplo_models` do zero), então o texto "inferência ainda não
+> validada" ficou desatualizado e foi trocado por uma confirmação.
+
 > **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
 > com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
 > o `.venv` local, não o runtime remoto. O job falhou com
@@ -1470,7 +1492,7 @@ from databricks.feature_engineering import FeatureEngineeringClient, FeatureLook
 from training_platform.contract import get_training_config
 from training_platform.pipeline import build_pipeline
 from training_platform.pyfunc_model import FeaturePlatformModel
-from training_platform.naming import derive_model_name
+from training_platform.naming import derive_model_name, validate_model_name
 from training_platform.audit import RunRecord, write_run
 
 # COMMAND ----------
@@ -1521,20 +1543,25 @@ feature_lookups = [
     for fl in config.feature_lookups
 ]
 spine = spark.table(config.spine_table)
+# Sem exclude_columns aqui de propósito: diferente de prepare_training_set.py, este
+# TrainingSet nunca passa por load_df() — só alimenta fe.log_model() para embarcar o
+# FeatureSpec no artefato. exclude_columns só afeta o DataFrame de load_df(), então
+# seria um parâmetro morto e visualmente confundível com o bug já corrigido em
+# prepare_training_set.py.
 training_set = fe.create_training_set(
     df=spine,
     feature_lookups=feature_lookups,
     label=config.label_column,
-    exclude_columns=[config.reference_date_column],
 )
 
 full_model_name = derive_model_name(catalog, config.domain, config.model_name)
+validate_model_name(full_model_name)
 mlflow.set_registry_uri("databricks-uc")
 
-# Por analogia com o SCHEMA_NOT_FOUND já confirmado duas vezes (audit.py, writer.py do
-# feature-platform) ao escrever numa tabela de schema novo via saveAsTable — registrar
-# um modelo UC num schema novo provavelmente tem o mesmo requisito. Inferência ainda
-# não validada ao vivo; a Task 13 confirma se isso é necessário de fato.
+# Mesmo requisito já confirmado para tabelas (audit.py, writer.py do feature-platform):
+# saveAsTable/registro UC não cria o schema automaticamente. Confirmado ao vivo na
+# Task 13 — o primeiro registro bem-sucedido precisou desta linha para criar
+# `exemplo_models` antes de `fe.log_model`.
 model_schema = full_model_name.rsplit(".", 1)[0]
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {model_schema}")
 
