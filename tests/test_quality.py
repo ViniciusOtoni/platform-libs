@@ -3,6 +3,7 @@ import pandas as pd
 from serving_platform.quality import (
     Finding,
     check_no_nulls_in_predictions,
+    check_no_nulls_in_joined_columns,
     check_row_count_matches,
     run_predictions_gate,
     gate_passed,
@@ -19,6 +20,18 @@ def test_check_no_nulls_in_predictions_fails():
     assert check_no_nulls_in_predictions(df, "prediction").status == "FAIL"
 
 
+def test_check_no_nulls_in_joined_columns_passes():
+    df = pd.DataFrame({"customer_id": ["c1", "c2"], "txn_count": [3, 5], "prediction": [0.1, 0.9]})
+    assert check_no_nulls_in_joined_columns(df, "prediction").status == "PASS"
+
+
+def test_check_no_nulls_in_joined_columns_fails_on_unmatched_feature_lookup():
+    df = pd.DataFrame({"customer_id": ["c1", "c2"], "txn_count": [3, None], "prediction": [0.1, 0.9]})
+    finding = check_no_nulls_in_joined_columns(df, "prediction")
+    assert finding.status == "FAIL"
+    assert "txn_count" in finding.detail
+
+
 def test_check_row_count_matches_passes_when_equal():
     assert check_row_count_matches(100, 100).status == "PASS"
 
@@ -29,10 +42,14 @@ def test_check_row_count_matches_fails_when_different():
     assert "input=100" in finding.detail
 
 
-def test_run_predictions_gate_returns_both_checks():
-    df = pd.DataFrame({"prediction": [0.1, 0.9]})
+def test_run_predictions_gate_returns_all_checks():
+    df = pd.DataFrame({"customer_id": ["c1", "c2"], "prediction": [0.1, 0.9]})
     findings = run_predictions_gate(df, "prediction", input_row_count=2)
-    assert {f.check for f in findings} == {"no_nulls_in_predictions", "row_count_matches"}
+    assert {f.check for f in findings} == {
+        "no_nulls_in_predictions",
+        "no_nulls_in_joined_columns",
+        "row_count_matches",
+    }
 
 
 def test_gate_passed_true_when_all_pass():

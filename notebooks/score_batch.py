@@ -63,7 +63,10 @@ predictions_df = fe.score_batch(
 
 # COMMAND ----------
 prediction_column = "prediction"
-predictions_pd = predictions_df.select(prediction_column).toPandas()
+# DataFrame completo (não só a coluna de predição) — o gate agora também checa nulos
+# nas colunas resolvidas pelo join (chave de entidade, chave de timestamp, features),
+# não só na coluna de predição.
+predictions_pd = predictions_df.toPandas()
 findings = run_predictions_gate(predictions_pd, prediction_column, input_row_count)
 passed = gate_passed(findings)
 predictions_table = derive_predictions_table_name(catalog, config.domain, model_name)
