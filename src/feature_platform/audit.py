@@ -36,6 +36,10 @@ def to_row(record: RunRecord) -> dict:
 def write_run(spark, record: RunRecord) -> None:
     """Escreve um registro na tabela de auditoria central. Requer SparkSession —
     exercitado via notebook (Task 12), não via pytest."""
+    # saveAsTable não cria o schema automaticamente em Unity Catalog — sem isso,
+    # a primeira escrita falha com SCHEMA_NOT_FOUND.
+    schema = AUDIT_TABLE.split(".")[0]
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     df = spark.createDataFrame([to_row(record)])
     if spark.catalog.tableExists(AUDIT_TABLE):
         df.write.format("delta").mode("append").saveAsTable(AUDIT_TABLE)

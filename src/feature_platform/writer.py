@@ -25,6 +25,10 @@ def write_feature_table(
 ) -> None:
     """Escreve a feature table no Delta. Requer SparkSession com Delta habilitado —
     exercitado via notebook (Task 12), não via pytest."""
+    # saveAsTable não cria o schema automaticamente em Unity Catalog — sem isso,
+    # a primeira escrita de um domínio novo falha com SCHEMA_NOT_FOUND.
+    catalog, schema, _table = table_name.split(".")
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
     strategy = write_strategy_for(mode)
     if strategy == "merge":
         _merge(spark, df, table_name, entity_keys, timestamp_key)
@@ -52,7 +56,9 @@ def _merge(spark, df, table_name: str, entity_keys: list[str], timestamp_key: st
 
 
 def _overwrite_by_partition(spark, df, table_name: str, partition_cols: list[str]) -> None:
-    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+    # spark.conf.set(...) para esta config global não é permitido em
+    # serverless/Spark Connect (AnalysisException: CONFIG_NOT_AVAILABLE.WITHOUT_SUGGESTION).
+    # O .option(...) abaixo, no próprio writer, já basta para o modo dinâmico por partição.
     writer = df.write.format("delta").mode("overwrite").option("partitionOverwriteMode", "dynamic")
     if partition_cols:
         writer = writer.partitionBy(*partition_cols)
