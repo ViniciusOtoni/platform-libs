@@ -1113,6 +1113,25 @@ register_training_config(config)
 > fix porque só reabrem o run existente via `run_id=mlflow_run_id` para logar
 > métricas/tags — não criam runs novos, então não dependem do experimento ativo.
 
+> **Correção (achado ao vivo, Task 13 — Step 4, forçando falha do gate):** com uma
+> `TrainingConfig` de `test_pct=0.0` (tabela de teste vazia), `select_best_and_test.py`
+> quebrava antes mesmo de chegar no gate: `scorer(pipeline, X_test, y_test)` chama
+> `pipeline.predict(X_test)` internamente, e o `RandomForestClassifier` do scikit-learn
+> levanta `ValueError: Found array with 0 sample(s) ... while a minimum of 1 is
+> required` — um crash não tratado, não uma falha graciosa do gate. Isso quebra o
+> propósito do gate (ser a rede de segurança que resulta num registro de auditoria
+> `FAILED` limpo, não numa exceção não tratada). Corrigido pulando a chamada ao `scorer`
+> quando `X_test` está vazio, deixando `test_metric = float("nan")` — o que também faz
+> `check_metric_is_finite` falhar, reforçando o `FAIL` do gate por dois motivos
+> independentes:
+> ```python
+> if len(X_test) > 0:
+>     test_metric = float(scorer(pipeline, X_test, y_test))
+> else:
+>     test_metric = float("nan")
+> ```
+> substitui a linha única `test_metric = float(scorer(pipeline, X_test, y_test))`.
+
 > **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
 > com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
 > o `.venv` local, não o runtime remoto. O job falhou com
@@ -1353,7 +1372,10 @@ metric_name = config.metric if isinstance(config.metric, str) else "custom_metri
 estimator = config.algorithm(**best_hyperparameters)
 pipeline = build_pipeline(config.custom_transforms, estimator)
 pipeline.fit(X_train, y_train)
-test_metric = float(scorer(pipeline, X_test, y_test))
+if len(X_test) > 0:
+    test_metric = float(scorer(pipeline, X_test, y_test))
+else:
+    test_metric = float("nan")
 
 findings = run_sanity_gate(test_metric, num_predictions=len(X_test))
 passed = gate_passed(findings)
