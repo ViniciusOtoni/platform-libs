@@ -88,12 +88,14 @@ except NoTrainingRunError:
 # a versão instalada do databricks-sdk e a documentação atual do Lakehouse Monitoring
 # antes do primeiro deploy real. Confirmado ao vivo (Task 12): método e nomes de
 # parâmetro batem, mas create() exige um de snapshot/time_series/inference_log.
-from databricks.sdk.service.catalog import MonitorSnapshot
+import time
+
+from databricks.sdk.service.catalog import MonitorSnapshot, MonitorRefreshInfoState
 
 client = WorkspaceClient()
 try:
-    client.quality_monitors.get(table_name=config.target_table)
-    client.quality_monitors.run_refresh(table_name=config.target_table)
+    monitor_info = client.quality_monitors.get(table_name=config.target_table)
+    refresh_info = client.quality_monitors.run_refresh(table_name=config.target_table)
 except Exception:
     # snapshot=MonitorSnapshot(): mais adequado que time_series para este caso de uso
     # (comparar contra uma baseline fixa, não janelas internas por timestamp). Sem
@@ -103,17 +105,39 @@ except Exception:
     # por padrão.
     monitoring_schema = f"{catalog}.{domain}_monitoring"
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {monitoring_schema}")
-    client.quality_monitors.create(
+    monitor_info = client.quality_monitors.create(
         table_name=config.target_table,
         assets_dir=f"/Shared/monitoring-platform/{domain}/{model_name}/{target_type}",
         output_schema_name=monitoring_schema,
         snapshot=MonitorSnapshot(),
     )
+    # create() dispara um refresh automaticamente — pega o mais recente para esperar.
+    refreshes = client.quality_monitors.list_refreshes(table_name=config.target_table).refreshes
+    refresh_info = max(refreshes, key=lambda r: r.start_time_ms)
+
+# O cálculo de profile/drift metrics do LHM é assíncrono — sem esperar o refresh
+# terminar, a tabela de saída pode não existir ou estar desatualizada quando lida
+# abaixo. Timeout de 10min é generoso o bastante para a tabela de exemplo.
+_deadline = time.time() + 600
+while refresh_info.state in (MonitorRefreshInfoState.PENDING, MonitorRefreshInfoState.RUNNING):
+    if time.time() > _deadline:
+        raise TimeoutError(f"monitor refresh for '{config.target_table}' did not finish within 600s")
+    time.sleep(15)
+    refresh_info = client.quality_monitors.get_refresh(
+        table_name=config.target_table, refresh_id=refresh_info.refresh_id
+    )
+
+if refresh_info.state != MonitorRefreshInfoState.SUCCESS:
+    raise RuntimeError(
+        f"monitor refresh for '{config.target_table}' ended in state {refresh_info.state}: {refresh_info.message}"
+    )
 
 # COMMAND ----------
-# RISCO DOCUMENTADO (spec, seção 6): nomes de coluna da tabela `_drift_metrics` gerada
-# pelo LHM a confirmar contra a versão instalada antes do primeiro deploy real.
-drift_table = f"{config.target_table}_drift_metrics"
+# RISCO DOCUMENTADO (spec, seção 6): nomes de coluna da própria tabela `_drift_metrics`
+# (ex.: `drift_type`, `statistic`) a confirmar contra a versão instalada antes do
+# primeiro deploy real — mas o NOME da tabela em si já não é mais adivinhado: vem
+# direto de monitor_info.drift_metrics_table_name (confirmado ao vivo).
+drift_table = monitor_info.drift_metrics_table_name
 drift_pd = spark.table(drift_table).toPandas()
 
 rows = []
