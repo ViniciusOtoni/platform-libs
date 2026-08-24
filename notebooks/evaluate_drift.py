@@ -101,10 +101,12 @@ except Exception:
     # exigiria saber a coluna de timestamp de target_table, ainda não parte do
     # MonitoringConfig): monitores snapshot comparam cada refresh contra o anterior
     # por padrão.
+    monitoring_schema = f"{catalog}.{domain}_monitoring"
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {monitoring_schema}")
     client.quality_monitors.create(
         table_name=config.target_table,
         assets_dir=f"/Shared/monitoring-platform/{domain}/{model_name}/{target_type}",
-        output_schema_name=f"{catalog}.{domain}_monitoring",
+        output_schema_name=monitoring_schema,
         snapshot=MonitorSnapshot(),
     )
 
