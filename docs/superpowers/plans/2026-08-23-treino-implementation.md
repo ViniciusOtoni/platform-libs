@@ -1149,7 +1149,26 @@ register_training_config(config)
 > else:
 >     metric_value = float("nan")
 > ```
-> substitui a linha única `metric_value = float(scorer(pipeline, X_val, y_val))`. O
+> substitui a linha única `metric_value = float(scorer(pipeline, X_val, y_val))`.
+
+> **Correção (2026-08-24, achada indiretamente — verificando o `serving-platform`, um
+> consumidor deste componente, tentando escorar o modelo registrado aqui):**
+> `fe.log_model(...)` (Task 10, `register_model.py`) não passava `code_paths`. O
+> `FeaturePlatformModel` (ou o `pyfunc_model_class` customizado do usuário) mora em
+> `training_platform/`, que nunca é instalado como dependência de pip — só existe via o
+> bootstrap de `sys.path` deste próprio job. Sem `code_paths`, o `cloudpickle` do
+> artefato do modelo não consegue reimportar esse módulo em nenhum ambiente fora de um
+> job do `training-platform` — o job de scoragem batch do `serving-platform` falhava
+> com `ModuleNotFoundError: No module named 'training_platform'` ao tentar carregar o
+> modelo via `fe.score_batch`. Corrigido adicionando
+> `code_paths=[os.path.join(_repo_root, "src", "training_platform")]` na chamada de
+> `fe.log_model` — `code_paths` é um parâmetro legítimo de
+> `mlflow.pyfunc.save_model`/`log_model`, repassado por `fe.log_model` via `**kwargs`
+> (confirmado lendo a docstring da lib instalada: "other keyword arguments... are
+> passed to the underlying MLflow API flavor.save_model()"). Ele embarca o pacote
+> `training_platform` inteiro dentro do artefato do modelo (`code/training_platform/`)
+> e adiciona `code/` ao `sys.path` de quem carregar o modelo depois — resolvendo o
+> import em qualquer ambiente, não só dentro deste repositório. O
 > `NaN` resultante flui como métrica normal até `select_best` (que não quebra em
 > comparações com `NaN`, só se comporta de forma não-determinística ao escolher o
 > "melhor") e, na pior hipótese, até o gate de sanidade em `select_best_and_test.py`, que
@@ -1565,6 +1584,10 @@ mlflow.set_registry_uri("databricks-uc")
 model_schema = full_model_name.rsplit(".", 1)[0]
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {model_schema}")
 
+# FeaturePlatformModel (ou o pyfunc_model_class customizado) mora em
+# training_platform/, que nunca é instalado como dependência de pip — code_paths
+# embarca o pacote no artefato do modelo para que qualquer consumidor (ex.: um job de
+# scoragem do serving-platform) consiga reimportá-lo ao carregar o modelo.
 with mlflow.start_run(run_id=mlflow_run_id):
     fe.log_model(
         model=wrapped_model,
@@ -1572,6 +1595,7 @@ with mlflow.start_run(run_id=mlflow_run_id):
         flavor=mlflow.pyfunc,
         training_set=training_set,
         registered_model_name=full_model_name,
+        code_paths=[os.path.join(_repo_root, "src", "training_platform")],
     )
     mlflow.set_tag("git_commit", git_commit)
     mlflow.set_tag("git_branch", git_branch)
