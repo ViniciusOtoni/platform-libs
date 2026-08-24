@@ -117,11 +117,12 @@ except Exception:
 
 # O cálculo de profile/drift metrics do LHM é assíncrono — sem esperar o refresh
 # terminar, a tabela de saída pode não existir ou estar desatualizada quando lida
-# abaixo. Timeout de 10min é generoso o bastante para a tabela de exemplo.
-_deadline = time.time() + 600
+# abaixo. Timeout de 20min (ajustado ao vivo — refreshes observados entre ~5 e ~14min,
+# provavelmente por provisionamento de compute serverless na Free Edition).
+_deadline = time.time() + 1200
 while refresh_info.state in (MonitorRefreshInfoState.PENDING, MonitorRefreshInfoState.RUNNING):
     if time.time() > _deadline:
-        raise TimeoutError(f"monitor refresh for '{config.target_table}' did not finish within 600s")
+        raise TimeoutError(f"monitor refresh for '{config.target_table}' did not finish within 1200s")
     time.sleep(15)
     refresh_info = client.quality_monitors.get_refresh(
         table_name=config.target_table, refresh_id=refresh_info.refresh_id
