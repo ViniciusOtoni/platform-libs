@@ -1,7 +1,7 @@
 import yaml
 
 from .contract import get_registry
-from .naming import derive_endpoint_name
+from .naming import derive_endpoint_name, validate_endpoint_name
 
 BATCH_NOTEBOOK_PATH = "../notebooks/score_batch.py"
 REFRESH_NOTEBOOK_PATH = "../notebooks/refresh_endpoint.py"
@@ -41,8 +41,10 @@ def _online_endpoint(model_name: str, config, entity_version: int) -> dict:
     # resolvido para a versão vigente no momento da geração (ver
     # resolve_alias_version); mover o alias depois exige rodar refresh_endpoint
     # (Task 7) ou gerar os recursos de novo.
+    endpoint_name = derive_endpoint_name(config.domain, model_name)
+    validate_endpoint_name(endpoint_name)
     return {
-        "name": derive_endpoint_name(config.domain, model_name),
+        "name": endpoint_name,
         "config": {
             "served_entities": [
                 {
