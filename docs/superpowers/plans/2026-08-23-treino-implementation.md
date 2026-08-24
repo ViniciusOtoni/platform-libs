@@ -975,6 +975,19 @@ git commit -m "feat: duplicate audit record type and pipeline_runs writer from f
 
 Glue code + configuração — sem TDD, com passos de verificação concretos.
 
+**Correções aplicadas preventivamente (2026-08-24), achadas no `feature-platform`
+rodando de verdade contra um job deployado via DAB:**
+1. **`sys.path`**: o cwd de um notebook rodando dentro de um job deployado
+   (`.../files/notebooks`) não inclui a raiz do bundle (onde mora `examples/`) nem
+   `src/` — `import examples.training_configs` quebraria com `ModuleNotFoundError` sem
+   isso. Os 4 notebooks abaixo já começam com o mesmo bloco de `sys.path.insert` usado
+   no `feature-platform`.
+2. **`currentRunId()`**: levanta `Py4JSecurityException` em compute
+   serverless/shared access mode (não está na whitelist do Py4J nesse modo). Os dois
+   notebooks que capturam `run_id_job` (`select_best_and_test.py`,
+   `register_model.py`) já usam `.currentRunId().get().toString()` com fallback para
+   um `uuid.uuid4()` gerado localmente.
+
 **Contrato de `taskValues` entre as 4 tasks** (documentado aqui porque nenhum módulo
 Python isolado o representa sozinho — é o "cimento" entre os notebooks):
 
@@ -1048,6 +1061,17 @@ dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
 # COMMAND ----------
+# Num job deployado via DAB, o cwd do notebook é .../files/notebooks — nem a raiz
+# do bundle (onde mora `examples/`) nem `src/` (onde mora `training_platform`) estão
+# no sys.path por padrão.
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import examples.training_configs  # noqa: F401
 import pyspark.sql.functions as F
 import mlflow
@@ -1128,6 +1152,14 @@ dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
 # COMMAND ----------
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import examples.training_configs  # noqa: F401
 import json
 import mlflow
@@ -1181,6 +1213,14 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import examples.training_configs  # noqa: F401
 import json
 from datetime import date, datetime
@@ -1206,7 +1246,14 @@ window_end = dbutils.jobs.taskValues.get(taskKey="prepare_training_set", key="wi
 results = json.loads(
     dbutils.jobs.taskValues.get(taskKey="fit_and_compare_hyperparams", key="hyperparameter_results")
 )
-run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().toString()
+# currentRunId() levanta Py4JSecurityException em compute serverless/shared access
+# mode — cai para um id gerado localmente quando o contexto de job não expõe o run id.
+try:
+    run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().get().toString()
+except Exception:
+    import uuid
+
+    run_id_job = str(uuid.uuid4())
 
 # COMMAND ----------
 best_hyperparameters = select_best(
@@ -1269,6 +1316,14 @@ dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import examples.training_configs  # noqa: F401
 import json
 from datetime import date, datetime
@@ -1294,7 +1349,12 @@ window_end = dbutils.jobs.taskValues.get(taskKey="prepare_training_set", key="wi
 best_hyperparameters = json.loads(
     dbutils.jobs.taskValues.get(taskKey="select_best_and_test", key="best_hyperparameters")
 )
-run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().toString()
+try:
+    run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().get().toString()
+except Exception:
+    import uuid
+
+    run_id_job = str(uuid.uuid4())
 
 # COMMAND ----------
 scratch_prefix = f"{catalog}.training_scratch.{model_name}"
@@ -1381,6 +1441,10 @@ targets:
 
 - [ ] **Step 7: Criar `resources/training_pipeline.job.yml`** (escrito à mão — estrutura fixa, não gerada)
 
+**Correção aplicada preventivamente (2026-08-24):** o CLI instalado exige extensão em
+referência de notebook local (achado no `feature-platform`) — os 4 `notebook_path`
+abaixo já incluem `.py`.
+
 ```yaml
 resources:
   jobs:
@@ -1398,7 +1462,7 @@ resources:
       tasks:
         - task_key: prepare_training_set
           notebook_task:
-            notebook_path: ../notebooks/prepare_training_set
+            notebook_path: ../notebooks/prepare_training_set.py
             base_parameters:
               model_name: "{{job.parameters.model_name}}"
               catalog: "{{job.parameters.catalog}}"
@@ -1406,7 +1470,7 @@ resources:
           depends_on:
             - task_key: prepare_training_set
           notebook_task:
-            notebook_path: ../notebooks/fit_and_compare_hyperparams
+            notebook_path: ../notebooks/fit_and_compare_hyperparams.py
             base_parameters:
               model_name: "{{job.parameters.model_name}}"
               catalog: "{{job.parameters.catalog}}"
@@ -1414,7 +1478,7 @@ resources:
           depends_on:
             - task_key: fit_and_compare_hyperparams
           notebook_task:
-            notebook_path: ../notebooks/select_best_and_test
+            notebook_path: ../notebooks/select_best_and_test.py
             base_parameters:
               model_name: "{{job.parameters.model_name}}"
               catalog: "{{job.parameters.catalog}}"
@@ -1424,7 +1488,7 @@ resources:
           depends_on:
             - task_key: select_best_and_test
           notebook_task:
-            notebook_path: ../notebooks/register_model
+            notebook_path: ../notebooks/register_model.py
             base_parameters:
               model_name: "{{job.parameters.model_name}}"
               catalog: "{{job.parameters.catalog}}"
