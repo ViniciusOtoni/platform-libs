@@ -51,7 +51,6 @@ training_set = fe.create_training_set(
     df=spine,
     feature_lookups=feature_lookups,
     label=config.label_column,
-    exclude_columns=[config.reference_date_column],
 )
 master = training_set.load_df()
 
@@ -77,7 +76,7 @@ scratch_prefix = f"{scratch_schema}.{model_name}"
 for split_name in ["train", "val", "test"]:
     (
         master_with_split.filter(F.col("_split") == split_name)
-        .drop("_split")
+        .drop("_split", config.reference_date_column)
         .write.format("delta")
         .mode("overwrite")
         .saveAsTable(f"{scratch_prefix}_{split_name}")
