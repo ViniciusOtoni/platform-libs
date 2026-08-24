@@ -34,6 +34,7 @@ def write_feature_table(
         _merge(spark, df, table_name, entity_keys, timestamp_key)
     else:
         _overwrite_by_partition(spark, df, table_name, partition_cols)
+    _ensure_primary_key(spark, table_name, entity_keys, timestamp_key)
 
 
 def _merge(spark, df, table_name: str, entity_keys: list[str], timestamp_key: str) -> None:
@@ -63,3 +64,31 @@ def _overwrite_by_partition(spark, df, table_name: str, partition_cols: list[str
     if partition_cols:
         writer = writer.partitionBy(*partition_cols)
     writer.saveAsTable(table_name)
+
+
+def _has_primary_key(spark, catalog: str, schema: str, table: str) -> bool:
+    rows = spark.sql(
+        f"""
+        SELECT 1 FROM system.information_schema.table_constraints
+        WHERE table_catalog = '{catalog}' AND table_schema = '{schema}'
+          AND table_name = '{table}' AND constraint_type = 'PRIMARY KEY'
+        """
+    ).collect()
+    return len(rows) > 0
+
+
+def _ensure_primary_key(spark, table_name: str, entity_keys: list[str], timestamp_key: str) -> None:
+    # O Feature Engineering em Unity Catalog só reconhece uma tabela como feature table
+    # via FeatureLookup se ela tiver uma PRIMARY KEY — sem isso, create_training_set
+    # falha com BAD_REQUEST "no primary key constraint defined". A coluna de timestamp
+    # precisa ser marcada TIMESERIES para o FE entender a semântica de
+    # timestamp_lookup_key usada no lookup. Idempotente: escritas repetidas na mesma
+    # tabela não tentam recriar a constraint.
+    catalog, schema, table = table_name.split(".")
+    if _has_primary_key(spark, catalog, schema, table):
+        return
+    for col in [*entity_keys, timestamp_key]:
+        spark.sql(f"ALTER TABLE {table_name} ALTER COLUMN {col} SET NOT NULL")
+    constraint_name = f"{schema}_{table}_pk"
+    key_list = ", ".join(entity_keys) + f", {timestamp_key} TIMESERIES"
+    spark.sql(f"ALTER TABLE {table_name} ADD CONSTRAINT {constraint_name} PRIMARY KEY ({key_list})")
