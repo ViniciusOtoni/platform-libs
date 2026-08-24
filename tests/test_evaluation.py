@@ -17,11 +17,11 @@ def test_evaluate_drift_boundary_value_passes():
 
 
 def test_evaluate_drift_carries_input_fields():
-    result = evaluate_drift("avg_ticket", "ks_test_pvalue", 0.01, threshold=0.05)
+    result = evaluate_drift("avg_ticket", "ks_test_statistic", 0.35, threshold=0.05)
     assert result == DriftResult(
         column_name="avg_ticket",
-        drift_metric_name="ks_test_pvalue",
-        drift_metric_value=0.01,
+        drift_metric_name="ks_test_statistic",
+        drift_metric_value=0.35,
         threshold=0.05,
         status="DRIFT_DETECTED",
     )
