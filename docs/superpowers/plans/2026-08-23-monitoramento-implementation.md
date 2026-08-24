@@ -1041,6 +1041,16 @@ git commit -m "feat: generate one scheduled DAB job per monitoring config"
 > Edition para o pipeline interno do LHM. Ajustado para 1200s (20min) para dar margem
 > de segurança.
 
+> **Correção (achada na revisão final de branch):** `client.quality_monitors.get(...)`
+> e `client.quality_monitors.run_refresh(...)` compartilhavam o mesmo `try`/`except
+> Exception` — se `get()` tivesse sucesso (monitor já existe) mas `run_refresh()`
+> falhasse por um motivo não relacionado (permissão, quota, erro transiente da API), a
+> execução caía no `except` e tentava `create()` num monitor que já existe, produzindo
+> um erro confuso de "já existe" em vez do erro real de `run_refresh`. Corrigido
+> separando: só `get()` fica no `try`/`except` (decide se o monitor existe);
+> `run_refresh()` roda fora, sem capturar exceções — uma falha ali propaga como o erro
+> real, não é reinterpretada como "criar de novo".
+
 Glue code + configuração. **Risco documentado no spec (seção 6), não um placeholder**:
 os nomes exatos dos métodos do `databricks-sdk` para criar/atualizar um monitor do
 Lakehouse Monitoring (`client.quality_monitors.create/get/run_refresh`, os parâmetros
@@ -1190,8 +1200,16 @@ from databricks.sdk.service.catalog import MonitorSnapshot, MonitorRefreshInfoSt
 client = WorkspaceClient()
 try:
     monitor_info = client.quality_monitors.get(table_name=config.target_table)
-    refresh_info = client.quality_monitors.run_refresh(table_name=config.target_table)
 except Exception:
+    monitor_info = None
+
+if monitor_info is not None:
+    # Monitor já existe — só dispara um novo refresh. Fora do try/except acima de
+    # propósito: uma falha aqui (permissão, quota, erro transiente da API) não deve
+    # ser reinterpretada como "monitor não existe, criar de novo" — isso produziria um
+    # erro confuso de "já existe" em vez do erro real do run_refresh.
+    refresh_info = client.quality_monitors.run_refresh(table_name=config.target_table)
+else:
     # snapshot=MonitorSnapshot(): create() exige um de snapshot/time_series/
     # inference_log. Sem baseline_table_name (item em aberto — ver nota de correção
     # acima): monitores snapshot comparam cada refresh contra o anterior por padrão.
@@ -1389,6 +1407,14 @@ git commit -m "ci: call mlops-platform's shared deploy-bundle reusable workflow"
 ---
 
 ## Task 11: README
+
+> **Correção (achada na revisão final de branch, depois da Task 12):** o README foi
+> escrito antes da Task 12 rodar, então sua seção "Risco conhecido" ficou desatualizada
+> — ainda dizia "não confirmado", quando a Task 12 já tinha confirmado que o LHM
+> funciona. Corrigido atualizando a seção com o resultado real (confirmado
+> funcionando) e documentando o item em aberto da baseline não conectada ao monitor
+> (mesmo texto das correções de Task 9/12 acima) — um leitor do README agora aprende
+> sobre essa limitação, não só quem lê os comentários do notebook.
 
 **Files:**
 - Create: `README.md`
