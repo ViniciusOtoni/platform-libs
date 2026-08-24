@@ -25,6 +25,32 @@ referências de notebook local) e `scripts/generate_resources.py` precisa inseri
 raiz do repositório no `sys.path`, não só `src/`, para que `import examples.features`
 funcione ao rodar o script diretamente.
 
+**Correção (2026-08-24, descoberta na Task 15, rodando o pipeline de verdade contra
+Unity Catalog):** três bugs a mais, só visíveis com workspace real (nenhum pytest local
+os pegaria):
+1. `write_run` (Task 8, `audit.py`) e `write_feature_table` (Task 7, `writer.py`):
+   `saveAsTable` não cria o schema automaticamente no Unity Catalog — a primeira
+   escrita num schema novo falhava com `SCHEMA_NOT_FOUND`. Ambos agora rodam
+   `CREATE SCHEMA IF NOT EXISTS` antes de escrever.
+2. `_overwrite_by_partition` (Task 7, `writer.py`): a linha
+   `spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")` é rejeitada
+   em compute serverless/Spark Connect (`CONFIG_NOT_AVAILABLE.WITHOUT_SUGGESTION`) —
+   removida; o `.option("partitionOverwriteMode", "dynamic")` já no próprio writer é
+   suficiente sozinho.
+3. `notebooks/run_feature_table.py` (Task 12): precisa inserir a raiz do bundle e
+   `src/` no `sys.path` no início do notebook — o cwd de um job deployado via DAB
+   (`.../files/notebooks`) não inclui nenhum dos dois por padrão, quebrando
+   `import examples.features`. E `dbutils.notebook.entry_point...currentRunId()`
+   levanta `Py4JSecurityException` nesse modo de compute (não está na whitelist do
+   Py4J) — trocado por `.currentRunId().get().toString()` com fallback para um
+   `uuid.uuid4()` gerado localmente se o contexto de job não expuser o run id dessa
+   forma.
+
+Essas três correções estão commitadas juntas no repositório
+(`fix: three bugs found running the pipeline for real in Unity Catalog`); os blocos de
+código abaixo, nas Tasks 7, 8 e 12, ainda mostram a versão pré-correção — trate o texto
+desta nota como a versão vigente.
+
 ---
 
 ## Scope Check
