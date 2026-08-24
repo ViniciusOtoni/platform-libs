@@ -59,6 +59,9 @@ pyfunc_class = config.pyfunc_model_class or FeaturePlatformModel
 wrapped_model = pyfunc_class(pipeline)
 
 # COMMAND ----------
+# `fe.log_model` não aceita `feature_lookups` diretamente nem `training_set=None` —
+# exige um `TrainingSet` de verdade (o mesmo padrão que `prepare_training_set.py` já
+# usa), que carrega o FeatureSpec a ser embarcado no artefato do modelo.
 fe = FeatureEngineeringClient()
 feature_lookups = [
     FeatureLookup(
@@ -69,6 +72,14 @@ feature_lookups = [
     )
     for fl in config.feature_lookups
 ]
+spine = spark.table(config.spine_table)
+training_set = fe.create_training_set(
+    df=spine,
+    feature_lookups=feature_lookups,
+    label=config.label_column,
+    exclude_columns=[config.reference_date_column],
+)
+
 full_model_name = derive_model_name(catalog, config.domain, config.model_name)
 mlflow.set_registry_uri("databricks-uc")
 
@@ -77,8 +88,7 @@ with mlflow.start_run(run_id=mlflow_run_id):
         model=wrapped_model,
         artifact_path="model",
         flavor=mlflow.pyfunc,
-        training_set=None,
-        feature_lookups=feature_lookups,
+        training_set=training_set,
         registered_model_name=full_model_name,
     )
     mlflow.set_tag("git_commit", git_commit)
