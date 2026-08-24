@@ -725,6 +725,32 @@ git commit -m "feat: duplicate audit record type and pipeline_runs writer"
 
 ## Task 6: Geração de recursos (`resource_gen.py`)
 
+> **Correção (2026-08-24, achada ao vivo na Task 9 — deploy real da trilha online):** o
+> recurso `model_serving_endpoints` de um DAB **não aceita** a sintaxe
+> `models:/nome@alias` em `entity_name` — só um `entity_name` "puro"
+> (`catalog.schema.modelo`) mais um `entity_version` **numérico** fixo. Tentar deployar
+> com `@champion` embutido em `entity_name` falhou ao vivo com
+> `404 RESOURCE_DOES_NOT_EXIST: Registered model '...@champion' does not exist`. Isso é
+> exatamente o risco documentado na intro da Task 7 ("a superfície exata do SDK... e o
+> schema exato do recurso model_serving_endpoints do DAB devem ser conferidos... antes
+> do primeiro deploy real") — confirmado, e com uma superfície diferente da assumida.
+> Corrigido resolvendo o alias para a versão vigente **no momento da geração dos
+> recursos** (não no deploy) via `WorkspaceClient().model_versions.get_by_alias(...)` —
+> daí o `entity_version` fixo no YAML gerado. Isso significa que promover um novo alias
+> não atualiza um endpoint já deployado automaticamente nem gerando/deployando de novo
+> sem intervenção — é exatamente o papel do `refresh_endpoint` (Task 7), que já existia
+> por esse motivo, e passa a ser ainda mais central: **é o único caminho, além de gerar
+> os recursos de novo, para mover um endpoint já no ar para uma versão nova**.
+>
+> Mudanças: `_online_endpoint` ganha um parâmetro `entity_version`; `generate_resources`
+> ganha um parâmetro opcional `resolve_alias_version` (uma função
+> `(model_name, config) -> int`), **obrigatório apenas quando algum `ServingConfig`
+> registrado tem `mode="online"`** — levanta `ValueError` claro se faltar, em vez de
+> gerar um recurso quebrado silenciosamente. Isso mantém `resource_gen.py` testável
+> localmente (os testes passam uma função fake) — só `scripts/generate_resources.py`
+> (Task 7, nunca testado localmente, sempre exercitado ao vivo) faz a chamada real ao
+> workspace.
+
 **Files:**
 - Create: `src/serving_platform/resource_gen.py`
 - Test: `tests/test_resource_gen.py`
@@ -769,12 +795,20 @@ def test_batch_config_generates_a_scheduled_job_with_one_task():
 def test_online_config_generates_a_model_serving_endpoint():
     register_serving_config(ServingConfig(domain="exemplo", model_name="modelo_online", mode="online"))
 
-    resources = generate_resources()
+    resources = generate_resources(resolve_alias_version=lambda model_name, config: 3)
     endpoints = resources["resources"]["model_serving_endpoints"]
 
     endpoint = endpoints["exemplo-modelo_online-serving"]
     served_entity = endpoint["config"]["served_entities"][0]
-    assert served_entity["entity_name"] == "${var.catalog}.exemplo_models.modelo_online@champion"
+    assert served_entity["entity_name"] == "${var.catalog}.exemplo_models.modelo_online"
+    assert served_entity["entity_version"] == "3"
+
+
+def test_online_config_without_resolver_raises_clear_error():
+    register_serving_config(ServingConfig(domain="exemplo", model_name="modelo_online", mode="online"))
+
+    with pytest.raises(ValueError, match="resolve_alias_version"):
+        generate_resources()
 
 
 def test_generate_resources_always_includes_refresh_endpoint_job():
@@ -842,14 +876,21 @@ def _batch_job(model_name: str, config) -> dict:
     }
 
 
-def _online_endpoint(model_name: str, config) -> dict:
+def _online_endpoint(model_name: str, config, entity_version: int) -> dict:
+    # model_serving_endpoints em DABs não aceita a sintaxe models:/nome@alias em
+    # entity_name — só um entity_name puro + entity_version numérico fixo (confirmado
+    # ao vivo: 404 RESOURCE_DOES_NOT_EXIST tentando "...@champion"). O alias é
+    # resolvido para a versão vigente no momento da geração (ver
+    # resolve_alias_version); mover o alias depois exige rodar refresh_endpoint
+    # (Task 7) ou gerar os recursos de novo.
     return {
         "name": derive_endpoint_name(config.domain, model_name),
         "config": {
             "served_entities": [
                 {
                     "name": model_name,
-                    "entity_name": f"${{var.catalog}}.{config.domain}_models.{model_name}@{config.alias}",
+                    "entity_name": f"${{var.catalog}}.{config.domain}_models.{model_name}",
+                    "entity_version": str(entity_version),
                     "scale_to_zero_enabled": True,
                     "workload_size": "Small",
                 }
@@ -880,7 +921,11 @@ def _refresh_endpoint_job() -> dict:
     }
 
 
-def generate_resources() -> dict:
+def generate_resources(resolve_alias_version=None) -> dict:
+    """resolve_alias_version: callable (model_name: str, config: ServingConfig) -> int.
+    Obrigatório quando há algum ServingConfig com mode="online" — model_serving_endpoints
+    em DABs só aceita entity_version (um número), não um alias, então o alias precisa
+    ser resolvido para a versão vigente no momento da geração dos recursos."""
     registry = get_registry()
     jobs = {"refresh_endpoint": _refresh_endpoint_job()}
     endpoints = {}
@@ -889,7 +934,15 @@ def generate_resources() -> dict:
         if config.mode == "batch":
             jobs[f"score_batch_{model_name}"] = _batch_job(model_name, config)
         else:
-            endpoints[derive_endpoint_name(config.domain, model_name)] = _online_endpoint(model_name, config)
+            if resolve_alias_version is None:
+                raise ValueError(
+                    f"ServingConfig '{model_name}' has mode='online' but no "
+                    "resolve_alias_version resolver was provided to generate_resources()"
+                )
+            entity_version = resolve_alias_version(model_name, config)
+            endpoints[derive_endpoint_name(config.domain, model_name)] = _online_endpoint(
+                model_name, config, entity_version
+            )
 
     resources = {"resources": {"jobs": jobs}}
     if endpoints:
@@ -897,15 +950,15 @@ def generate_resources() -> dict:
     return resources
 
 
-def write_resources(path: str) -> None:
+def write_resources(path: str, resolve_alias_version=None) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(generate_resources(), f, sort_keys=False)
+        yaml.safe_dump(generate_resources(resolve_alias_version), f, sort_keys=False)
 ```
 
 - [ ] **Step 4: Rodar e confirmar sucesso**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_resource_gen.py -v`
-Expected: `4 passed`
+Expected: `5 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -1152,20 +1205,44 @@ targets:
 
 - [ ] **Step 5: Criar `scripts/generate_resources.py`**
 
+> **Correção (achada nas Tasks 7 e 9):** o `sys.path.insert` original só incluía
+> `src/`, não a raiz do repositório — rodar o script diretamente (não como módulo)
+> não coloca a raiz no `sys.path` automaticamente, quebrando
+> `import examples.serving_configs` com `ModuleNotFoundError: No module named
+> 'examples'` (mesmo bug já confirmado no `feature-platform`). E o gerador agora
+> precisa resolver o alias de qualquer `ServingConfig` `mode="online"` para uma versão
+> concreta (correção acima, Task 6) — via uma chamada real ao workspace usando
+> `databricks-sdk`, só possível aqui (nunca em `resource_gen.py`, que fica puro e
+> testável). `CATALOG` é literal (não `${var.catalog}`) porque a resolução do alias
+> precisa de um catalog real no momento da geração — deve bater com o default de
+> `catalog` em `databricks.yml`; o YAML gerado continua referenciando `${var.catalog}`
+> para o deploy em si.
+
 ```python
 # scripts/generate_resources.py
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+_repo_root = Path(__file__).parent.parent
+for _p in (_repo_root, _repo_root / "src"):
+    sys.path.insert(0, str(_p))
 
 import examples.serving_configs  # noqa: F401
+from databricks.sdk import WorkspaceClient
 from serving_platform.resource_gen import write_resources
+
+CATALOG = "workspace"  # deve bater com o default de `catalog` em databricks.yml
+
+
+def _resolve_alias_version(model_name: str, config) -> int:
+    full_name = f"{CATALOG}.{config.domain}_models.{model_name}"
+    return WorkspaceClient().model_versions.get_by_alias(full_name, config.alias).version
+
 
 if __name__ == "__main__":
     output_path = Path(__file__).parent.parent / "resources" / "generated_serving.yml"
     output_path.parent.mkdir(exist_ok=True)
-    write_resources(str(output_path))
+    write_resources(str(output_path), resolve_alias_version=_resolve_alias_version)
     print(f"resources written to {output_path}")
 ```
 
