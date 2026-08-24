@@ -22,6 +22,41 @@ repositório passou a ser um framework puro — `dominios/exemplo/` foi renomead
 `.github/workflows/deploy.yml` (Task 8) passou a ser um caller do reusable workflow
 centralizado em `mlops-platform`. Ver spec, seção 1.2.
 
+**Correção preventiva (2026-08-24, por analogia com bugs já confirmados ao vivo no
+`feature-platform` e no `training-platform`, aplicada antes de qualquer implementação
+deste componente):** cinco classes de bug já encontradas e corrigidas nos dois
+componentes anteriores se aplicam aqui pela mesma causa raiz (compute serverless da
+Free Edition, notebooks deployados via DAB, Unity Catalog não criando schema
+automaticamente):
+1. **Extensão `.py` em `notebook_path`** — o CLI instalado rejeita referências sem
+   extensão. `resource_gen.py` (Task 6) usa `"../notebooks/score_batch.py"` e
+   `"../notebooks/refresh_endpoint.py"`, não os caminhos sem extensão do rascunho
+   original do design.
+2. **Bootstrap de `sys.path`** — o cwd de um notebook deployado via DAB
+   (`.../files/notebooks`) não inclui a raiz do bundle (onde mora `examples/`) nem
+   `src/` por padrão. Ambos os notebooks (Task 7) inserem os dois no `sys.path` antes
+   de importar `examples.serving_configs`/`serving_platform`.
+3. **`currentRunId()` sem `.get()` e sem fallback** — levanta `Py4JSecurityException`
+   em compute serverless/shared access mode. `score_batch.py` usa
+   `.currentRunId().get().toString()` num `try`, com fallback para `uuid.uuid4()`.
+   `refresh_endpoint.py` não precisa disso — não usa `run_id` (não escreve auditoria).
+4. **`%pip install databricks-feature-engineering` + `restartPython()`** — a lib não
+   vem pré-instalada no compute serverless da Free Edition. `score_batch.py` importa
+   `databricks.feature_engineering`, então precisa do bootstrap. `refresh_endpoint.py`
+   só usa `databricks.sdk`, que já vem disponível por padrão (confirmado
+   empiricamente no `training-platform` — `WorkspaceClient` funcionou sem bootstrap
+   nenhum) — não precisa do `%pip install`.
+5. **`CREATE SCHEMA IF NOT EXISTS` antes do primeiro `saveAsTable`** — Unity Catalog
+   não cria o schema sozinho. Aplicado em dois lugares: `audit.py`'s `write_run` (Task
+   5, mesmo padrão exato de `feature-platform`/`training-platform` — `CREATE SCHEMA IF
+   NOT EXISTS platform_audit`) e `score_batch.py`, antes de escrever
+   `<catalog>.<domain>_predictions.<model_name>` pela primeira vez (schema novo, nunca
+   criado por nenhum componente anterior).
+
+Nenhum desses foi validado ao vivo neste componente ainda — são inferências por
+analogia, aplicadas preventivamente para não redescobrir os mesmos bugs já
+confirmados duas vezes. A Task 9 (verificação ponta a ponta) confirma se bastam.
+
 ---
 
 ## Scope Check
@@ -598,6 +633,11 @@ def to_row(record: RunRecord) -> dict:
 
 def write_run(spark, record: RunRecord) -> None:
     """Requer SparkSession — exercitado via notebook (Task 6), não via pytest."""
+    # saveAsTable não cria o schema automaticamente em Unity Catalog — sem isso,
+    # a primeira escrita falha com SCHEMA_NOT_FOUND (mesmo bug confirmado no
+    # feature-platform e no training-platform).
+    schema = AUDIT_TABLE.split(".")[0]
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     df = spark.createDataFrame([to_row(record)])
     if spark.catalog.tableExists(AUDIT_TABLE):
         df.write.format("delta").mode("append").saveAsTable(AUDIT_TABLE)
@@ -659,7 +699,7 @@ def test_batch_config_generates_a_scheduled_job_with_one_task():
     job = jobs["score_batch_modelo_batch"]
     assert job["schedule"]["quartz_cron_expression"] == "0 0 6 * * ?"
     assert [t["task_key"] for t in job["tasks"]] == ["score_batch"]
-    assert job["tasks"][0]["notebook_task"]["notebook_path"] == "../notebooks/score_batch"
+    assert job["tasks"][0]["notebook_task"]["notebook_path"] == "../notebooks/score_batch.py"
 
 
 def test_online_config_generates_a_model_serving_endpoint():
@@ -707,8 +747,8 @@ import yaml
 from .contract import get_registry
 from .naming import derive_endpoint_name
 
-BATCH_NOTEBOOK_PATH = "../notebooks/score_batch"
-REFRESH_NOTEBOOK_PATH = "../notebooks/refresh_endpoint"
+BATCH_NOTEBOOK_PATH = "../notebooks/score_batch.py"
+REFRESH_NOTEBOOK_PATH = "../notebooks/refresh_endpoint.py"
 
 
 def _batch_job(model_name: str, config) -> dict:
@@ -856,12 +896,29 @@ register_serving_config(config)
 
 ```python
 # Databricks notebook source
+# MAGIC %pip install databricks-feature-engineering
+
+# COMMAND ----------
+dbutils.library.restartPython()
+
+# COMMAND ----------
 dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
 
 # COMMAND ----------
+# Num job deployado via DAB, o cwd do notebook é .../files/notebooks — nem a raiz
+# do bundle (onde mora `examples/`) nem `src/` (onde mora `serving_platform`) estão
+# no sys.path por padrão.
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import examples.serving_configs  # noqa: F401
 from datetime import date, datetime
 
@@ -879,7 +936,15 @@ catalog = dbutils.widgets.get("catalog")
 git_commit = dbutils.widgets.get("git_commit")
 git_branch = dbutils.widgets.get("git_branch")
 config = get_serving_config(model_name)
-run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().toString()
+# currentRunId() não está na whitelist do Py4J em compute serverless/shared access
+# mode — levanta Py4JSecurityException. Cai para um id gerado localmente quando o
+# contexto de job não expõe o run id dessa forma.
+try:
+    run_id_job = dbutils.notebook.entry_point.getDbutils().notebook().getContext().currentRunId().get().toString()
+except Exception:
+    import uuid
+
+    run_id_job = str(uuid.uuid4())
 
 # COMMAND ----------
 full_model_name = f"{catalog}.{config.domain}_models.{model_name}"
@@ -919,6 +984,10 @@ if not passed:
     failed_checks = [f.check for f in findings if f.status == "FAIL"]
     raise ValueError(f"predictions quality gate failed: {failed_checks}")
 
+# saveAsTable não cria o schema automaticamente em Unity Catalog — <domain>_predictions
+# é um schema novo, nunca criado por nenhum componente anterior.
+predictions_schema = predictions_table.rsplit(".", 1)[0]
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {predictions_schema}")
 predictions_df.write.format("delta").mode("append").saveAsTable(predictions_table)
 
 write_run(
@@ -946,6 +1015,17 @@ dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
 # COMMAND ----------
+# Num job deployado via DAB, o cwd do notebook é .../files/notebooks — nem a raiz
+# do bundle (onde mora `examples/`) nem `src/` (onde mora `serving_platform`) estão
+# no sys.path por padrão.
+import os
+import sys
+
+_repo_root = os.path.abspath(os.path.join(os.getcwd(), ".."))
+for _p in (_repo_root, os.path.join(_repo_root, "src")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import examples.serving_configs  # noqa: F401
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ServedEntityInput
