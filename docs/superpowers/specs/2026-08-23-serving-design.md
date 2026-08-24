@@ -29,6 +29,21 @@ dedicada confirmou um fato que molda a trilha online: mover o alias `champion` n
 Unity Catalog **não atualiza sozinho** um endpoint de Model Serving já provisionado —
 é preciso uma chamada explícita de atualização.
 
+## 1.1 Emenda (2026-08-23, durante o design do Componente 4)
+
+O design do Componente 4 (Monitoramento) descobriu que monitorar drift de predições
+("model drift") exige histórico das predições ao longo do tempo — e a tabela de
+predições, como desenhada originalmente nesta seção, era sobrescrita (`overwrite`) a
+cada execução, guardando só "a foto de agora". Sem histórico, não há o que comparar.
+
+Correção: a tabela de predições passa de `overwrite` para **`append`**, com uma nova
+coluna `scored_at` (timestamp da execução que gerou aquela linha). Isso não muda nada
+do que a seção 5 já descreve sobre a trilha batch em si (continua uma única task,
+continua `fe.score_batch`, continua sem checkpoint na leitura da spine) — muda só o
+modo de escrita da saída. A tabela de predições deixa de ser um snapshot e passa a ser
+um histórico apensado, o que é exatamente o que o Componente 4 precisa para calcular
+drift de saída ao longo do tempo.
+
 ## 2. Escopo
 
 **Dentro do escopo:**
@@ -142,7 +157,7 @@ evidência histórica no repositório da POC).
 | Escopo de dados | A spine de inferência **inteira**, como estiver no momento da execução — sem checkpoint. Ela representa "quem escorar agora", não um histórico acumulável; filtrar por checkpoint arriscaria deixar alguém sem score atualizado. |
 | Resolução do alias | Automática a cada execução — o job sempre lê a versão vigente de `@{alias}` no momento em que roda. |
 | Schedule | Configurável (`schedule_cron`) — scoragem batch existe para rodar em cadência, diferente do treino (sempre sob demanda). |
-| Saída | `<catalog>.<domain>_predictions.<model_name>` — mesma convenção de nomenclatura de feature tables e modelos. |
+| Saída | `<catalog>.<domain>_predictions.<model_name>` — mesma convenção de nomenclatura de feature tables e modelos. **Escrita em `append`, com coluna `scored_at`** (timestamp da execução) — histórico apensado, não snapshot (emenda 1.1, motivada pelo Componente 4). |
 | Gate de qualidade | Bloqueante: sem nulos na coluna de predição; contagem de linhas de saída igual à da spine de entrada. Se falhar, nada é escrito. |
 
 ## 6. Trilha online: endpoint e atualização de alias

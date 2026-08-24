@@ -8,6 +8,13 @@
 
 **Tech Stack:** Python 3.11, `databricks-feature-engineering`, `databricks-sdk`, PySpark + Delta (runtime Databricks serverless), Databricks Asset Bundles, pytest, GitHub Actions.
 
+**Emenda (2026-08-23, durante o design do Componente 4):** a tabela de predições da
+trilha batch passou de `overwrite` para `append`, com uma nova coluna `scored_at`,
+porque o design do Componente 4 (Monitoramento) descobriu que monitorar drift de
+predições exige histórico — um snapshot sobrescrito a cada execução não deixa o que
+comparar. Reflexo já aplicado na Task 7 abaixo; ver
+`docs/superpowers/specs/2026-08-23-serving-design.md`, seção 1.1.
+
 ---
 
 ## Scope Check
@@ -852,6 +859,7 @@ dbutils.widgets.text("git_branch", "local")
 import dominios.exemplo.serving_configs  # noqa: F401
 from datetime import date, datetime
 
+import pyspark.sql.functions as F
 from databricks.feature_engineering import FeatureEngineeringClient
 
 from serving_platform.contract import get_serving_config
@@ -877,7 +885,7 @@ predictions_df = fe.score_batch(
     model_uri=f"models:/{full_model_name}@{config.alias}",
     df=spine,
     result_type="double",
-)
+).withColumn("scored_at", F.current_timestamp())
 
 # COMMAND ----------
 prediction_column = "prediction"
@@ -905,7 +913,7 @@ if not passed:
     failed_checks = [f.check for f in findings if f.status == "FAIL"]
     raise ValueError(f"predictions quality gate failed: {failed_checks}")
 
-predictions_df.write.format("delta").mode("overwrite").saveAsTable(predictions_table)
+predictions_df.write.format("delta").mode("append").saveAsTable(predictions_table)
 
 write_run(
     spark,
