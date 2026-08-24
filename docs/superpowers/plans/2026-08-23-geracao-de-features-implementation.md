@@ -14,9 +14,16 @@ repositório passou a ser um framework puro — sem pastas de domínio real dent
 integração, não domínio de negócio real), e o decorator `@feature_table` ganhou um
 parâmetro `domain` **explícito e obrigatório** (a inferência automática pelo caminho
 `dominios/<domínio>/` não faz mais sentido sem essa pasta). O
-`.github/workflows/deploy.yml` (Task 11) passou a ser um caller do reusable workflow
+`.github/workflows/deploy.yml` (Task 13) passou a ser um caller do reusable workflow
 centralizado em `mlops-platform`. Ver
 `docs/superpowers/specs/2026-08-23-geracao-de-features-design.md`, seção 1.1.
+
+**Correção (2026-08-24, descoberta ao validar a Task 12 contra o Databricks real):**
+duas correções pequenas, aplicadas nas Tasks 10 e 12 abaixo — `resource_gen.py`
+precisa da extensão `.py` no `NOTEBOOK_PATH` (o CLI instalado exige extensão em
+referências de notebook local) e `scripts/generate_resources.py` precisa inserir a
+raiz do repositório no `sys.path`, não só `src/`, para que `import examples.features`
+funcione ao rodar o script diretamente.
 
 ---
 
@@ -1250,6 +1257,14 @@ git commit -m "feat: add engine orchestration (window resolution, gate, write, a
 
 ## Task 10: Geração do resource DAB (`resource_gen.py`)
 
+**Correção (2026-08-24, descoberta durante a validação real da Task 12):** o
+`NOTEBOOK_PATH` original (`"../notebooks/run_feature_table"`, sem extensão) faz o
+Databricks CLI instalado (v1.10.0) rejeitar `databricks bundle validate` com
+`notebook "notebooks/run_feature_table" not found. Did you mean
+"notebooks/run_feature_table.py"?` — referências a notebook local exigem uma extensão
+(`.py`/`.r`/`.scala`/`.sql`/`.ipynb`). Corrigido abaixo para
+`"../notebooks/run_feature_table.py"`, com o teste correspondente já ajustado.
+
 **Files:**
 - Create: `src/feature_platform/resource_gen.py`
 - Test: `tests/test_resource_gen.py`
@@ -1325,7 +1340,7 @@ def test_generate_job_resource_points_notebook_task_to_relative_path():
     resource = generate_job_resource(job_name="feature_pipeline")
     task = resource["resources"]["jobs"]["feature_pipeline"]["tasks"][0]
 
-    assert task["notebook_task"]["notebook_path"] == "../notebooks/run_feature_table"
+    assert task["notebook_task"]["notebook_path"] == "../notebooks/run_feature_table.py"
     assert task["notebook_task"]["base_parameters"]["feature_table"] == "feature_a"
 ```
 
@@ -1342,7 +1357,7 @@ import yaml
 
 from .contract import get_registry
 
-NOTEBOOK_PATH = "../notebooks/run_feature_table"
+NOTEBOOK_PATH = "../notebooks/run_feature_table.py"
 
 _JOB_PARAMETERS = [
     {"name": "mode", "default": "incremental"},
@@ -1582,12 +1597,21 @@ run_feature_table(
 
 - [ ] **Step 3: Criar o script de geração de resources**
 
+**Correção (2026-08-24, descoberta durante a validação real desta task):** a versão
+original só inseria `src/` no `sys.path`, então `import examples.features` (pacote na
+raiz do repo, não em `src/`) falhava com `ModuleNotFoundError: No module named
+'examples'` ao rodar `python scripts\generate_resources.py` — porque o Python define
+`sys.path[0]` como o diretório do próprio script (`scripts/`), não a raiz do repo, nem
+o cwd. Corrigido abaixo inserindo também a raiz do repo no `sys.path`.
+
 ```python
 # scripts/generate_resources.py
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+_REPO_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "src"))
+sys.path.insert(0, str(_REPO_ROOT))
 
 import examples.features  # noqa: F401  (importa o exemplo para popular o registro)
 from feature_platform.resource_gen import write_job_resource
