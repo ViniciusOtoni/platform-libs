@@ -95,8 +95,16 @@ from databricks.sdk.service.catalog import MonitorSnapshot, MonitorRefreshInfoSt
 client = WorkspaceClient()
 try:
     monitor_info = client.quality_monitors.get(table_name=config.target_table)
-    refresh_info = client.quality_monitors.run_refresh(table_name=config.target_table)
 except Exception:
+    monitor_info = None
+
+if monitor_info is not None:
+    # Monitor já existe — só dispara um novo refresh. Fora do try/except acima de
+    # propósito: uma falha aqui (permissão, quota, erro transiente da API) não deve
+    # ser reinterpretada como "monitor não existe, criar de novo" — isso produziria um
+    # erro confuso de "já existe" em vez do erro real do run_refresh.
+    refresh_info = client.quality_monitors.run_refresh(table_name=config.target_table)
+else:
     # snapshot=MonitorSnapshot(): mais adequado que time_series para este caso de uso
     # (comparar contra uma baseline fixa, não janelas internas por timestamp). Sem
     # baseline_table_name (item em aberto — materializar uma tabela de baseline

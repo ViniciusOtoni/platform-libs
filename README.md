@@ -3,7 +3,7 @@
 Componente de monitoramento do ecossistema de MLOps no Databricks: `MonitoringConfig`
 sobre feature tables e tabelas de predições, baseline resolvida automaticamente a
 partir de `platform_audit.pipeline_runs`, Lakehouse Monitoring nativo como motor de
-cálculo (risco aceito, não confirmado na Free Edition — ver o spec, seção 6), e
+cálculo (confirmado funcionando na Free Edition — ver "Risco conhecido" abaixo), e
 sugestão de retreino que nunca dispara nada sozinho.
 
 Design completo em
@@ -57,10 +57,18 @@ Uma linha ali **é** a sugestão de retreino — nada neste componente dispara o
 
 ## Risco conhecido
 
-Suporte do Lakehouse Monitoring na Databricks Free Edition não foi confirmado antes da
-implementação — validar ao vivo (Task 12 do plano de implementação). Se não funcionar,
-só o notebook `evaluate_drift.py` precisa de redesenho; o contrato e a tabela central
-continuam válidos.
+**Confirmado ao vivo (2026-08-24): o Lakehouse Monitoring funciona na Databricks Free
+Edition.** Um monitor `snapshot` foi criado com sucesso e produziu linhas reais
+(`PASS` e `DRIFT_DETECTED`) em `platform_monitoring.drift_metrics`. Cinco ajustes
+foram necessários para chegar lá — ver as notas "Correção" no plano de implementação,
+Task 12.
+
+**Item em aberto, não fechado nesta sessão:** a janela de baseline resolvida a partir
+de `platform_audit.pipeline_runs` (`resolve_baseline_window`) ainda não é usada para
+materializar uma baseline de verdade no monitor — o monitor `snapshot` hoje compara
+cada refresh contra o anterior, não contra a janela de treino do modelo. Corrigir isso
+exige uma decisão de design (provavelmente adicionar uma coluna de timestamp ao
+`MonitoringConfig`) — ver spec, seção 11.
 
 ## Secrets necessários no GitHub Actions
 
