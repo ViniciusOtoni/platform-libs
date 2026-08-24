@@ -1222,10 +1222,12 @@ def run_feature_table(
     git_branch: str,
     backfill_start: str | None = None,
     backfill_end: str | None = None,
+    database_instance_name: str = "",
 ) -> None:
     """Orquestra uma execução completa: resolve janela, computa, aplica o gate de
     qualidade, escreve (se passar), audita e sincroniza online (se configurado).
-    Requer SparkSession real — exercitado via notebook (Task 12), não via pytest."""
+    Requer SparkSession real — exercitado via notebook (Task 12), não via pytest.
+    database_instance_name só é usado (e obrigatório) quando spec.online=True."""
     window = resolve_window(spec, mode, today, backfill_start, backfill_end, spark)
     sources = {name: spark.table(name) for name in spec.sources}
     result_df = spec.compute_fn(sources, window)
@@ -1285,7 +1287,7 @@ def run_feature_table(
     if spec.online:
         from .online_sync import sync_online_table
 
-        sync_online_table(spark, table_name, spec.entity_keys)
+        sync_online_table(spark, table_name, spec.entity_keys, database_instance_name)
 ```
 
 - [ ] **Step 4: Rodar e confirmar sucesso**
@@ -1480,6 +1482,34 @@ treinamento deste plano. A implementação abaixo é a melhor tentativa com a AP
 documentada (`databricks.sdk.service.database`); **valide contra a versão instalada do
 SDK antes de rodar em produção** (passo de verificação no final desta task).
 
+> **Correção (2026-08-24, achada indiretamente — tentando deployar um endpoint online
+> no `serving-platform`, que depende de uma feature table sincronizada):** o risco
+> acima se confirmou, com uma assinatura diferente da assumida.
+> `client.database.create_synced_database_table(name=..., spec=...)` não bate com a
+> API real do `databricks-sdk` instalado (`>=0.30` na Free Edition atual) —
+> `create_synced_database_table(self, synced_table: SyncedDatabaseTable)` recebe um
+> **único objeto**, não `name=`/`spec=` soltos. Além disso, `SyncedDatabaseTable`
+> exige `database_instance_name` — o Database Instance do Lakebase de destino —, que
+> **não existia como parâmetro nenhum** na assinatura original de `sync_online_table`.
+> Corrigido reescrevendo `sync_online_table` para montar `SyncedDatabaseTable(name=...,
+> database_instance_name=..., spec=SyncedTableSpec(**build_synced_table_spec(...)))` e
+> chamar `create_synced_database_table(synced_table=...)`. `database_instance_name`
+> vira um parâmetro obrigatório de `sync_online_table` (e de `run_feature_table`, com
+> default `""`, validado com `ValueError` claro se `spec.online=True` e o parâmetro
+> vier vazio — falha rápida e legível em vez de um erro opaco do SDK).
+>
+> **Isso NÃO foi validado ao vivo** — nenhum Database Instance do Lakebase existe no
+> workspace usado nesta sessão (provisionar um é uma decisão de infraestrutura à
+> parte: recurso standalone, cobrado, ainda em Public Preview). A correção acima
+> resolve o bug de assinatura confirmado via inspeção direta do SDK instalado
+> (`inspect.signature`), mas a sincronização de ponta a ponta continua sem
+> confirmação — ver `docs/superpowers/specs/2026-08-23-geracao-de-features-design.md`,
+> se aplicável, ou o spec do `serving-platform`, emenda 1.4, para o achado completo.
+> `notebooks/run_feature_table.py` e `resource_gen.py` **não foram alterados** — o
+> exemplo permanece `online=False` (não exercita este caminho), e adicionar um widget
+> `database_instance` ao job seria expandir a superfície de um caminho ainda não
+> validável nesta sessão.
+
 **Files:**
 - Create: `src/feature_platform/online_sync.py`
 - Test: `tests/test_online_sync.py`
@@ -1518,20 +1548,26 @@ def build_synced_table_spec(table_name: str, primary_keys: list[str]) -> dict:
     }
 
 
-def sync_online_table(spark, table_name: str, primary_keys: list[str]) -> None:
+def sync_online_table(spark, table_name: str, primary_keys: list[str], database_instance_name: str) -> None:
     """Cria ou sincroniza a synced table no Lakebase para a feature table informada.
-    Requer databricks-sdk e um workspace real — exercitado via notebook (Task 12), não
-    via pytest. A superfície exata da API (`WorkspaceClient().database.*`) deve ser
-    conferida contra a versão do databricks-sdk instalada antes do primeiro deploy real,
-    porque o Online Feature Store via Lakebase é uma API recente do Databricks."""
+    Requer databricks-sdk, um workspace real, e um Database Instance do Lakebase já
+    provisionado (database_instance_name) — exercitado via notebook (Task 12), não via
+    pytest. Sem um Database Instance existente, a chamada falha com um erro claro do
+    próprio SDK/API, não silenciosamente."""
     from databricks.sdk import WorkspaceClient
+    from databricks.sdk.service.database import SyncedDatabaseTable, SyncedTableSpec
+
+    if not database_instance_name:
+        raise ValueError("sync_online_table requires a non-empty database_instance_name")
 
     client = WorkspaceClient()
-    spec = build_synced_table_spec(table_name, primary_keys)
-    client.database.create_synced_database_table(
+    spec_fields = build_synced_table_spec(table_name, primary_keys)
+    synced_table = SyncedDatabaseTable(
         name=f"{table_name}_online",
-        spec=spec,
+        database_instance_name=database_instance_name,
+        spec=SyncedTableSpec(**spec_fields),
     )
+    client.database.create_synced_database_table(synced_table=synced_table)
 ```
 
 - [ ] **Step 4: Rodar e confirmar sucesso**
