@@ -968,6 +968,47 @@ git commit -m "feat: generate one scheduled DAB job per monitoring config"
 
 ## Task 9: Notebook, domínio de exemplo e bundle DAB
 
+> **Correção (achada ao vivo na Task 12 — o próprio risco da seção 6 sendo resolvido):**
+> boa notícia confirmada primeiro: `client.quality_monitors.create/get/run_refresh`
+> **existem e respondem** na Free Edition — os nomes de método e de parâmetro
+> (`table_name`, `output_schema_name`, `assets_dir`, `baseline_table_name`) batiam
+> exatamente com o assumido, confirmado via `inspect.signature` na versão instalada do
+> SDK antes do primeiro deploy real. O único gap: `create()` exige explicitamente um
+> dos três parâmetros `snapshot`, `time_series` ou `inference_log` (nenhum estava
+> presente na chamada original) — falhou ao vivo com
+> `InvalidParameterValue: Please specify one of 'snapshot', 'time_series', or
+> 'inference_log' field`. Escolhido `snapshot=MonitorSnapshot()` (sem campos
+> obrigatórios) em vez de `time_series`: o caso de uso deste componente é comparar o
+> estado atual contra uma baseline fixa (já resolvida via `resolve_baseline_window` e
+> passada como `baseline_table_name`), não análise de múltiplas janelas internas por
+> timestamp — `time_series` exigiria adicionar uma nova coluna obrigatória
+> (`timestamp_col`) ao `MonitoringConfig`, uma mudança de contrato desnecessária para o
+> que o spec pede. Corrigido importando `MonitorSnapshot` de
+> `databricks.sdk.service.catalog` e passando `snapshot=MonitorSnapshot()` na chamada
+> de `create()`.
+>
+> **Gap real encontrado ao corrigir isso, ainda não resolvido:**
+> `baseline_table_name=config.target_table` estava autorreferente — o parâmetro de
+> baseline apontava para a própria tabela monitorada, o que tornaria qualquer
+> comparação de drift sempre zero (baseline == atual). `baseline_start`/`baseline_end`,
+> resolvidos por `resolve_baseline_window` logo acima no notebook, nunca eram
+> efetivamente usados para materializar uma tabela de baseline de verdade — a janela é
+> calculada e descartada. A correção real exigiria ou (a) materializar uma tabela de
+> baseline filtrada por `[baseline_start, baseline_end]`, o que precisa saber a coluna
+> de timestamp de `target_table` (`feature_ts` para feature tables, `scored_at` para
+> predições — nenhuma delas está no `MonitoringConfig` hoje), ou (b) usar `time_series`
+> em vez de `snapshot` e deixar o LHM comparar janelas internamente. Isso é uma decisão
+> de design real, não uma correção mecânica — fora do escopo de uma correção ao vivo
+> sem uma rodada de grilling. Corrigido removendo `baseline_table_name` da chamada (era
+> ativamente errado, pior que omitir) — sem baseline explícita, monitores do tipo
+> `snapshot` comparam cada refresh contra o refresh anterior automaticamente (padrão do
+> LHM), o que pelo menos produz uma comparação não-trivial, mesmo que não seja
+> exatamente "contra a janela de treino" como o spec pretende. `resolve_baseline_window`
+> continua implementada e testada — só não está conectada à criação do monitor ainda.
+> **Item em aberto, não fechado nesta sessão:** decidir como materializar/usar a
+> baseline de verdade (provavelmente exige adicionar um campo de coluna de timestamp ao
+> `MonitoringConfig`).
+
 Glue code + configuração. **Risco documentado no spec (seção 6), não um placeholder**:
 os nomes exatos dos métodos do `databricks-sdk` para criar/atualizar um monitor do
 Lakehouse Monitoring (`client.quality_monitors.create/get/run_refresh`, os parâmetros
@@ -1110,16 +1151,21 @@ except NoTrainingRunError:
 # RISCO DOCUMENTADO (spec, seção 6): nomes de método e parâmetros a confirmar contra
 # a versão instalada do databricks-sdk e a documentação atual do Lakehouse Monitoring
 # antes do primeiro deploy real.
+from databricks.sdk.service.catalog import MonitorSnapshot
+
 client = WorkspaceClient()
 try:
     client.quality_monitors.get(table_name=config.target_table)
     client.quality_monitors.run_refresh(table_name=config.target_table)
 except Exception:
+    # snapshot=MonitorSnapshot(): create() exige um de snapshot/time_series/
+    # inference_log. Sem baseline_table_name (item em aberto — ver nota de correção
+    # acima): monitores snapshot comparam cada refresh contra o anterior por padrão.
     client.quality_monitors.create(
         table_name=config.target_table,
         assets_dir=f"/Shared/monitoring-platform/{domain}/{model_name}/{target_type}",
         output_schema_name=f"{catalog}.{domain}_monitoring",
-        baseline_table_name=config.target_table,
+        snapshot=MonitorSnapshot(),
     )
 
 # COMMAND ----------
