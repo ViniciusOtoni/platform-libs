@@ -1,4 +1,10 @@
 # Databricks notebook source
+# MAGIC %pip install databricks-feature-engineering
+
+# COMMAND ----------
+dbutils.library.restartPython()
+
+# COMMAND ----------
 dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
@@ -65,7 +71,9 @@ master_with_split = master.withColumn(
     .otherwise("test"),
 )
 
-scratch_prefix = f"{catalog}.training_scratch.{model_name}"
+scratch_schema = f"{catalog}.training_scratch"
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {scratch_schema}")
+scratch_prefix = f"{scratch_schema}.{model_name}"
 for split_name in ["train", "val", "test"]:
     (
         master_with_split.filter(F.col("_split") == split_name)

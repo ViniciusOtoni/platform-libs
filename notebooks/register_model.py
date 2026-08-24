@@ -1,4 +1,10 @@
 # Databricks notebook source
+# MAGIC %pip install databricks-feature-engineering
+
+# COMMAND ----------
+dbutils.library.restartPython()
+
+# COMMAND ----------
 dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("git_commit", "local")
