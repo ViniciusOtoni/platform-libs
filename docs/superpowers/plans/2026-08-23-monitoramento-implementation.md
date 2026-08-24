@@ -413,6 +413,25 @@ git commit -m "feat: resolve monitoring baseline window from platform_audit.pipe
 
 ## Task 4: Avaliação de drift (`evaluation.py`)
 
+> **Correção (achada durante a implementação — Task 4 Step 1, teste inconsistente com
+> o Step 3 original):** `test_evaluate_drift_carries_input_fields` chamava
+> `evaluate_drift("avg_ticket", "ks_test_pvalue", 0.01, threshold=0.05)` esperando
+> `DRIFT_DETECTED`, mas a implementação original do Step 3 (`value > threshold`) produz
+> `PASS` para `0.01 > 0.05` (falso) — o teste nunca teria passado com a implementação
+> como escrita. A intenção provável era testar semântica de p-value (valor baixo =
+> drift), mas o spec não pede comparação direction-aware por métrica — `evaluate_drift`
+> é descrita como uma comparação uniforme contra o threshold, e os nomes reais de
+> métrica que o Lakehouse Monitoring produz são um risco não confirmado (spec, seção
+> 6; Task 9 é onde isso se resolve). Adicionar uma heurística baseada em substring do
+> nome da métrica (`"pvalue" in name`) dentro da lógica pura seria adivinhar semântica
+> de uma API ainda não validada. Corrigido mantendo a implementação simples
+> (`value > threshold`) e ajustando os dados do teste para serem consistentes com ela —
+> o teste continua verificando que todos os campos são carregados corretamente para o
+> `DriftResult`, só com um valor/threshold que realmente produz `DRIFT_DETECTED` sob
+> comparação direta. Se a Task 9 revelar que alguma métrica do LHM precisa de
+> comparação invertida, isso é tratado no notebook (que já converte
+> `latest.get("statistic")` antes de chamar `evaluate_drift`), não nesta função pura.
+
 **Files:**
 - Create: `src/monitoring_platform/evaluation.py`
 - Test: `tests/test_evaluation.py`
@@ -440,11 +459,11 @@ def test_evaluate_drift_boundary_value_passes():
 
 
 def test_evaluate_drift_carries_input_fields():
-    result = evaluate_drift("avg_ticket", "ks_test_pvalue", 0.01, threshold=0.05)
+    result = evaluate_drift("avg_ticket", "ks_test_statistic", 0.35, threshold=0.05)
     assert result == DriftResult(
         column_name="avg_ticket",
-        drift_metric_name="ks_test_pvalue",
-        drift_metric_value=0.01,
+        drift_metric_name="ks_test_statistic",
+        drift_metric_value=0.35,
         threshold=0.05,
         status="DRIFT_DETECTED",
     )
