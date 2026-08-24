@@ -86,17 +86,26 @@ except NoTrainingRunError:
 # COMMAND ----------
 # RISCO DOCUMENTADO (spec, seção 6): nomes de método e parâmetros a confirmar contra
 # a versão instalada do databricks-sdk e a documentação atual do Lakehouse Monitoring
-# antes do primeiro deploy real.
+# antes do primeiro deploy real. Confirmado ao vivo (Task 12): método e nomes de
+# parâmetro batem, mas create() exige um de snapshot/time_series/inference_log.
+from databricks.sdk.service.catalog import MonitorSnapshot
+
 client = WorkspaceClient()
 try:
     client.quality_monitors.get(table_name=config.target_table)
     client.quality_monitors.run_refresh(table_name=config.target_table)
 except Exception:
+    # snapshot=MonitorSnapshot(): mais adequado que time_series para este caso de uso
+    # (comparar contra uma baseline fixa, não janelas internas por timestamp). Sem
+    # baseline_table_name (item em aberto — materializar uma tabela de baseline
+    # exigiria saber a coluna de timestamp de target_table, ainda não parte do
+    # MonitoringConfig): monitores snapshot comparam cada refresh contra o anterior
+    # por padrão.
     client.quality_monitors.create(
         table_name=config.target_table,
         assets_dir=f"/Shared/monitoring-platform/{domain}/{model_name}/{target_type}",
         output_schema_name=f"{catalog}.{domain}_monitoring",
-        baseline_table_name=config.target_table,
+        snapshot=MonitorSnapshot(),
     )
 
 # COMMAND ----------
