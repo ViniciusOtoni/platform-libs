@@ -9,4 +9,9 @@ class FeaturePlatformModel(mlflow.pyfunc.PythonModel):
         self.model = model
 
     def predict(self, context, model_input, params=None):
+        # fe.score_batch entrega model_input com colunas extras (chave de entidade,
+        # chave de timestamp) que o modelo não viu no fit — feature_names_in_ (padrão
+        # do sklearn, preenchido ao fitar com um DataFrame nomeado) filtra e reordena
+        # para o schema exato de fit.
+        model_input = model_input[self.model.feature_names_in_]
         return self.model.predict_proba(model_input)[:, 1]
