@@ -57,6 +57,24 @@ Nenhum desses foi validado ao vivo neste componente ainda — são inferências 
 analogia, aplicadas preventivamente para não redescobrir os mesmos bugs já
 confirmados duas vezes. A Task 9 (verificação ponta a ponta) confirma se bastam.
 
+**Correção (2026-08-24, achada ao vivo na Task 9 — bug novo, não uma repetição dos
+anteriores):** `fe.score_batch()` chama internamente `mlflow.pyfunc.spark_udf` para
+rodar a inferência distribuída — e essa chamada resolve para o `mlflow` **pré-instalado
+no runtime base** (`/databricks/python/lib/.../mlflow`), não para uma versão mais nova
+instalada via `%pip install databricks-feature-engineering` (que só força a instalação
+da própria lib de FE, sem forçar upgrade de uma dependência transitiva já satisfeita no
+ambiente). O `mlflow` pré-instalado nesta imagem do Free Edition não sabe interpretar o
+formato de string de versão do runtime serverless (`'18.x-aarch64-photon-scala2'`),
+levantando `InvalidVersion` ao tentar comparar com `Version("15.4")`. Bug real do
+`mlflow` (não deste componente), corrigido a partir da versão 3.15.0 (PR
+[#24336](https://github.com/mlflow/mlflow/pull/24336)). Corrigido fixando a versão
+mínima explicitamente no bootstrap de `score_batch.py`:
+`%pip install databricks-feature-engineering "mlflow>=3.15.0"` — substitui
+`%pip install databricks-feature-engineering` sozinho. Não se aplica a
+`prepare_training_set.py`/`register_model.py` do `training-platform`: nenhum dos dois
+chama `spark_udf` (só `fe.create_training_set`/`fe.log_model`), então não hits esse
+caminho de código.
+
 ---
 
 ## Scope Check
@@ -896,7 +914,7 @@ register_serving_config(config)
 
 ```python
 # Databricks notebook source
-# MAGIC %pip install databricks-feature-engineering
+# MAGIC %pip install databricks-feature-engineering "mlflow>=3.15.0"
 
 # COMMAND ----------
 dbutils.library.restartPython()
