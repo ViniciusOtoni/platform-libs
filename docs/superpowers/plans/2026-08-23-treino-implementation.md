@@ -1066,8 +1066,24 @@ register_training_config(config)
 
 - [ ] **Step 2: Criar `notebooks/prepare_training_set.py`**
 
+> **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
+> com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
+> o `.venv` local, não o runtime remoto. O job falhou com
+> `ModuleNotFoundError: No module named 'databricks.feature_engineering'`. O schema do
+> DAB (`environments:`/`environment_key`) documenta esse mecanismo como relevante para
+> tasks Python script/wheel/dbt — não fica claro que se aplique a notebook tasks. O
+> caminho padrão e bem documentado para notebook tasks é `%pip install` na primeira
+> célula, seguido de `dbutils.library.restartPython()`. Aplicado abaixo (e no
+> `register_model.py`, que também importa `databricks.feature_engineering`).
+
 ```python
 # Databricks notebook source
+# MAGIC %pip install databricks-feature-engineering
+
+# COMMAND ----------
+dbutils.library.restartPython()
+
+# COMMAND ----------
 dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 
@@ -1134,7 +1150,9 @@ master_with_split = master.withColumn(
     .otherwise("test"),
 )
 
-scratch_prefix = f"{catalog}.training_scratch.{model_name}"
+scratch_schema = f"{catalog}.training_scratch"
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {scratch_schema}")
+scratch_prefix = f"{scratch_schema}.{model_name}"
 for split_name in ["train", "val", "test"]:
     (
         master_with_split.filter(F.col("_split") == split_name)
@@ -1319,8 +1337,17 @@ dbutils.jobs.taskValues.set("best_hyperparameters", json.dumps(best_hyperparamet
 
 - [ ] **Step 5: Criar `notebooks/register_model.py`**
 
+> **Correção (mesma raiz do Step 2):** `databricks.feature_engineering` também é
+> importado aqui — precisa do mesmo bootstrap `%pip install` + restart.
+
 ```python
 # Databricks notebook source
+# MAGIC %pip install databricks-feature-engineering
+
+# COMMAND ----------
+dbutils.library.restartPython()
+
+# COMMAND ----------
 dbutils.widgets.text("model_name", "")
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("git_commit", "local")
