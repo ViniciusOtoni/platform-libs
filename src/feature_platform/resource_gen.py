@@ -2,7 +2,7 @@ import yaml
 
 from .contract import get_registry
 
-NOTEBOOK_PATH = "../notebooks/run_feature_table"
+NOTEBOOK_PATH = "../notebooks/run_feature_table.py"
 
 _JOB_PARAMETERS = [
     {"name": "mode", "default": "incremental"},

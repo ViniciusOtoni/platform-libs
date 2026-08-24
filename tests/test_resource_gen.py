@@ -65,5 +65,5 @@ def test_generate_job_resource_points_notebook_task_to_relative_path():
     resource = generate_job_resource(job_name="feature_pipeline")
     task = resource["resources"]["jobs"]["feature_pipeline"]["tasks"][0]
 
-    assert task["notebook_task"]["notebook_path"] == "../notebooks/run_feature_table"
+    assert task["notebook_task"]["notebook_path"] == "../notebooks/run_feature_table.py"
     assert task["notebook_task"]["base_parameters"]["feature_table"] == "feature_a"
