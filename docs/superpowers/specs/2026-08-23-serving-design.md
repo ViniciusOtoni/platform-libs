@@ -73,6 +73,39 @@ colunas resolvidas pelo join** (chave de entidade, chave de timestamp e features
 só na coluna de predição. Ver
 `docs/superpowers/plans/2026-08-23-serving-implementation.md`, correção na Task 4.
 
+## 1.4 Emenda (2026-08-24, trilha online — risco da seção 6 parcialmente confirmado)
+
+A verificação ao vivo da trilha online (Task 9, Step 5) confirmou **dois** dos riscos
+documentados na seção 6, e revelou um terceiro não previsto:
+
+1. **Confirmado:** o recurso `model_serving_endpoints` de um DAB não aceita
+   `models:/nome@alias` em `entity_name` — só um `entity_name` puro + `entity_version`
+   numérico fixo. Corrigido (ver correção na Task 6 do plano) resolvendo o alias para a
+   versão vigente no momento da geração dos recursos.
+2. **Novo, não previsto:** o deploy do endpoint falhou com "Online feature store setup
+   failed" porque a feature table de exemplo (`feature-platform`) está registrada com
+   `online=False` — nunca foi sincronizada como Online Table no Lakebase. Isso por si só
+   já seria esperado (o exemplo é deliberadamente batch, seção 1.2), mas investigar a
+   causa revelou um problema mais profundo:
+3. **Confirmado — bug real em `feature-platform`, não neste repositório:**
+   `online_sync.py`'s `sync_online_table()` chama
+   `client.database.create_synced_database_table(name=..., spec=...)` — assinatura que
+   não bate com a API real do `databricks-sdk` instalado
+   (`create_synced_database_table(self, synced_table: SyncedDatabaseTable)`, um único
+   objeto, não `name=`/`spec=`). Além disso, criar uma synced table exige um
+   **Database Instance do Lakebase já provisionado** (`database_instance_name`), e
+   nenhum existe neste workspace — provisionar um é uma decisão de infraestrutura à
+   parte (recurso standalone, cobrado, ainda em Public Preview), fora do escopo desta
+   verificação.
+
+**Conclusão:** a resolução automática de `FeatureLookup` num Model Serving endpoint via
+Online Feature Store/Lakebase **continua não validada de ponta a ponta** — o passo
+imediatamente anterior a essa validação (sincronizar a feature table como Online
+Table) tem um bug confirmado e uma dependência de infraestrutura não provisionada.
+Corrigida a assinatura da chamada em `feature-platform` (ver o plano daquele
+repositório), mas a validação completa fica pendente de uma decisão explícita de
+provisionar um Database Instance — não tomada nesta sessão.
+
 ## 2. Escopo
 
 **Dentro do escopo:**

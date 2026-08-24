@@ -1393,18 +1393,31 @@ git add README.md
 git commit -m "docs: add README with usage instructions and known risks"
 ```
 
-- [ ] **Step 3: Verificação ponta a ponta — trilha batch (prioridade, sem custo de
+- [x] **Step 3: Verificação ponta a ponta — trilha batch (prioridade, sem custo de
   endpoint):** confirmar que `workspace.exemplo.spine_inference` existe, rodar
   `databricks bundle run score_batch_propensao_exemplo -t dev`, confirmar que
   `workspace.exemplo_predictions.propensao_exemplo` foi criada e que há uma linha
   `SUCCESS` em `platform_audit.pipeline_runs` com `component="serving"`,
   `mode="batch"`.
 
-- [ ] **Step 4: Forçar falha do gate** (ex.: apontar `spine_inference_table` para uma
+  Confirmado, depois de corrigir 5 bugs reais ao vivo (bootstraps de `%pip
+  install`/`sys.path`, `mlflow>=3.15.0` pinado por causa de `spark_udf`, `code_paths`
+  ausente em `fe.log_model` do `training-platform`, `FeaturePlatformModel` não
+  filtrando `model_input` para `feature_names_in_`). Todas as correções documentadas
+  nas notas "Correção" acima. 5 predições escritas (uma por cliente), tabela com
+  `prediction`/`scored_at`, linha `SUCCESS` confirmada via SQL direto.
+
+- [x] **Step 4: Forçar falha do gate** (ex.: apontar `spine_inference_table` para uma
   tabela vazia ou com schema incompatível) e confirmar que **nada é escrito** na
   tabela de predições, e que a auditoria grava `status=FAILED`.
 
-- [ ] **Step 5: Verificação ponta a ponta — trilha online (só depois da batch
+  Forçado com uma spine contendo um `customer_id` sem correspondência na feature
+  table. Isso revelou o bug do gate (correção na Task 4 — nulos nas colunas do join
+  não eram checados) e, depois de corrigido, confirmou o comportamento certo:
+  `ValueError: predictions quality gate failed: ['no_nulls_in_joined_columns']`,
+  nenhuma linha nova na tabela de predições, linha `FAILED` gravada na auditoria.
+
+- [x] **Step 5: Verificação ponta a ponta — trilha online (só depois da batch
   funcionar, e ciente do custo):** registrar um `ServingConfig` de teste com
   `mode="online"`, gerar recursos, `databricks bundle deploy`, confirmar que o endpoint
   sobe e responde a uma chamada de teste com as features resolvidas corretamente — esta
@@ -1412,6 +1425,22 @@ git commit -m "docs: add README with usage instructions and known risks"
   `FeatureLookup` não funcionar como assumido, documentar o comportamento real
   encontrado e ajustar o spec antes de prosseguir. **Derrubar o endpoint manualmente ao
   final do teste** para não incorrer em custo contínuo.
+
+  **Parcialmente concluído — ver spec, emenda 1.4.** O deploy do endpoint em si exigiu
+  uma correção real (Task 6 — `model_serving_endpoints` não aceita `@alias` em
+  `entity_name`, corrigido resolvendo para `entity_version` numérico via
+  `get_by_alias`). Depois disso, o deploy falhou com "Online feature store setup
+  failed": a feature table de exemplo tem `online=False` (nunca foi sincronizada como
+  Online Table), e investigar revelou um bug real em `feature-platform`'s
+  `online_sync.py` (assinatura de `create_synced_database_table` incorreta) **mais**
+  uma dependência de infraestrutura não provisionada (nenhum Database Instance do
+  Lakebase existe neste workspace — provisionar um é uma decisão à parte, recurso
+  cobrado e em Public Preview). Corrigida a assinatura em `feature-platform` (ver o
+  plano daquele repositório); a validação completa da resolução automática de
+  `FeatureLookup` num endpoint online **continua não confirmada**, pendente de uma
+  decisão explícita do usuário sobre provisionar o Database Instance. Endpoint de
+  teste derrubado (`databricks serving-endpoints delete`), exemplo revertido para
+  `mode="batch"` (o exemplo permanente, sem custo de endpoint sempre ligado).
 
 ---
 
