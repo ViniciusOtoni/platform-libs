@@ -25,6 +25,7 @@ catalog = dbutils.widgets.get("catalog")
 config = get_training_config(model_name)
 
 mlflow_run_id = dbutils.jobs.taskValues.get(taskKey="prepare_training_set", key="mlflow_run_id")
+mlflow.set_experiment(f"/Shared/training-platform/{config.domain}/{config.model_name}")
 
 # COMMAND ----------
 scratch_prefix = f"{catalog}.training_scratch.{model_name}"
