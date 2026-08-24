@@ -1479,29 +1479,59 @@ git commit -m "docs: add README with usage instructions and known risk"
 
 ## Task 12: Verificação ponta a ponta no workspace
 
+**Concluída em 2026-08-24, ao vivo contra o workspace Free Edition — risco central
+resolvido: Lakehouse Monitoring FUNCIONA na Free Edition.** Cinco bugs reais
+encontrados e corrigidos ao longo da verificação (ver notas "Correção" acima, todas
+datadas 2026-08-24): `create()` exige um de `snapshot`/`time_series`/`inference_log`;
+`baseline_table_name` autorreferente (bug real, removido — item em aberto para uma
+sessão de design futura); `output_schema_name` também precisa de
+`CREATE SCHEMA IF NOT EXISTS`; refresh do LHM é assíncrono e precisa de polling antes
+de ler a saída; timeout inicial de 10min era curto demais (refreshes observados entre
+~5 e ~31 minutos — ajustado para 20min, com um retry automático do próprio Databricks
+Jobs cobrindo o caso raro de estourar isso).
+
 Esta é a verificação que resolve, na prática, o risco central deste componente.
 
-- [ ] **Step 1:** Confirmar que `workspace.exemplo_features.customer_transaction_features`
+- [x] **Step 1:** Confirmar que `workspace.exemplo_features.customer_transaction_features`
   (Componente 1) e `workspace.exemplo_predictions.propensao_exemplo` (Componente 3, já
   em `append` com `scored_at`) têm dados suficientes, e que há pelo menos um run
   `SUCCESS` de treino em `platform_audit.pipeline_runs` para `propensao_exemplo`
   (Componente 2).
 
-- [ ] **Step 2:** Rodar `databricks bundle run drift_check_exemplo_propensao_exemplo_feature_table -t dev`.
+  Confirmado: as duas tabelas já existiam (criadas durante a verificação dos
+  Componentes 1 e 3), e havia múltiplos runs `SUCCESS` de treino para
+  `propensao_exemplo` (Componente 2).
+
+- [x] **Step 2:** Rodar `databricks bundle run drift_check_exemplo_propensao_exemplo_feature_table -t dev`.
   **Se o `client.quality_monitors.create(...)` falhar** com um erro indicando que o
   recurso não está disponível na Free Edition: documentar o erro exato no spec (seção
   6, substituindo "não confirmado" por "confirmado indisponível"), e abrir uma decisão
   de redesenho pontual do notebook (não do contrato) — por exemplo, cálculo de drift
   via PySpark/pandas puro, mantendo `MonitoringConfig` e `drift_metrics` inalterados.
 
-- [ ] **Step 3: Se funcionar**, confirmar que `platform_monitoring.drift_metrics` foi
+  **Não foi preciso o plano B** — `create()` funcionou depois das correções acima
+  (ver notas de correção detalhadas). Confirmado via `client.quality_monitors.get(...)`:
+  `status=MONITOR_STATUS_ACTIVE`.
+
+- [x] **Step 3: Se funcionar**, confirmar que `platform_monitoring.drift_metrics` foi
   criada com uma linha por coluna monitorada, e que `platform_audit.pipeline_runs` tem
   uma linha `SUCCESS` com `component="monitoring"`, `mode="drift_check"`.
 
-- [ ] **Step 4:** Forçar um valor de drift acima do threshold (ajustando `threshold`
+  Confirmado via query SQL direta: duas linhas em `drift_metrics` (`txn_count`,
+  `avg_ticket`), `status=PASS`, e uma linha `SUCCESS` em `pipeline_runs` com
+  `component="monitoring"`, `mode="drift_check"`.
+
+- [x] **Step 4:** Forçar um valor de drift acima do threshold (ajustando `threshold`
   para um valor bem baixo no `MonitoringConfig` de teste) e confirmar que a linha
   correspondente em `drift_metrics` aparece com `status="DRIFT_DETECTED"` — e que
   nenhuma execução do `training-platform` é disparada automaticamente.
+
+  Forçado via `threshold=-1.0` temporário (revertido depois da verificação, não faz
+  parte do exemplo permanente) — `drift_metric_value=0.0 > threshold=-1.0` produz
+  `DRIFT_DETECTED`, confirmado via query SQL direta nas duas colunas monitoradas.
+  Nenhuma chamada ao `training-platform` existe em nenhum lugar do código (confirmado
+  por inspeção — a sugestão de retreino é só a linha em `drift_metrics`, como o design
+  pretende).
 
 ---
 

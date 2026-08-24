@@ -214,8 +214,9 @@ risco da seção 6 é validado.
 
 | Risco | Situação |
 |---|---|
-| Lakehouse Monitoring disponível na Free Edition | **Não confirmado após duas pesquisas.** Risco aceito conscientemente pelo usuário; validação fica para a implementação. |
-| Superfície exata da API/SDK do Lakehouse Monitoring | Não fixada neste design; a implementação deve conferir contra a documentação e a versão instalada. |
+| Lakehouse Monitoring disponível na Free Edition | **Confirmado ao vivo (2026-08-24, implementação): FUNCIONA.** `client.quality_monitors.create/get/run_refresh` existem e respondem; um monitor `snapshot` foi criado com sucesso (`MONITOR_STATUS_ACTIVE`), produziu `PASS` e `DRIFT_DETECTED` reais em `platform_monitoring.drift_metrics`. Ver plano de implementação, Task 12, para os 5 ajustes que foram necessários (nenhum muda o contrato). |
+| Superfície exata da API/SDK do Lakehouse Monitoring | **Confirmada ao vivo.** Nomes de método batiam com o assumido; `create()` exige um de `snapshot`/`time_series`/`inference_log` (não documentado nesta seção originalmente); o refresh é assíncrono (5-31min observados) e precisa de polling; os nomes das tabelas de saída vêm de `MonitorInfo.drift_metrics_table_name`, não devem ser montados por concatenação de string. |
+| Baseline real (janela de treino) não conectada à criação do monitor | **Novo, achado na implementação.** `resolve_baseline_window` (seção 5) é calculada mas não é usada para materializar uma baseline de verdade no monitor — o monitor `snapshot` compara cada refresh contra o anterior, não contra a janela de treino. Corrigir isso exige uma decisão de design (provavelmente adicionar uma coluna de timestamp ao `MonitoringConfig`) — não fechada nesta sessão. Ver plano, Task 9. |
 | Performance real do modelo (ground truth) | Fora de escopo do v1, sem mecanismo de label definido em nenhum componente da plataforma. |
 
 ## 12. Fechamento do ecossistema
