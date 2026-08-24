@@ -54,7 +54,7 @@ except Exception:
 # COMMAND ----------
 scratch_prefix = f"{catalog}.training_scratch.{model_name}"
 train_df = spark.table(f"{scratch_prefix}_train").toPandas()
-feature_cols = [c for c in train_df.columns if c != config.label_column]
+feature_cols = [c for c in train_df.columns if c not in {config.label_column, *[fl.lookup_key for fl in config.feature_lookups]}]
 X_train, y_train = train_df[feature_cols], train_df[config.label_column]
 
 estimator = config.algorithm(**best_hyperparameters)
