@@ -1009,6 +1009,14 @@ git commit -m "feat: generate one scheduled DAB job per monitoring config"
 > baseline de verdade (provavelmente exige adicionar um campo de coluna de timestamp ao
 > `MonitoringConfig`).
 
+> **Correção (achada ao vivo na mesma rodada da Task 12):** `create()` falhou em
+> seguida com `NotFound: Schema 'workspace.exemplo_monitoring' does not exist` —
+> `output_schema_name` também não cria o schema sozinho, mesmo bug de Unity Catalog já
+> confirmado em `CREATE SCHEMA IF NOT EXISTS` nos outros componentes, só que
+> manifestado via uma API diferente (`quality_monitors.create`, não `saveAsTable`).
+> Corrigido rodando `spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{domain}_monitoring")`
+> antes da chamada.
+
 Glue code + configuração. **Risco documentado no spec (seção 6), não um placeholder**:
 os nomes exatos dos métodos do `databricks-sdk` para criar/atualizar um monitor do
 Lakehouse Monitoring (`client.quality_monitors.create/get/run_refresh`, os parâmetros
@@ -1161,10 +1169,12 @@ except Exception:
     # snapshot=MonitorSnapshot(): create() exige um de snapshot/time_series/
     # inference_log. Sem baseline_table_name (item em aberto — ver nota de correção
     # acima): monitores snapshot comparam cada refresh contra o anterior por padrão.
+    monitoring_schema = f"{catalog}.{domain}_monitoring"
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {monitoring_schema}")
     client.quality_monitors.create(
         table_name=config.target_table,
         assets_dir=f"/Shared/monitoring-platform/{domain}/{model_name}/{target_type}",
-        output_schema_name=f"{catalog}.{domain}_monitoring",
+        output_schema_name=monitoring_schema,
         snapshot=MonitorSnapshot(),
     )
 
