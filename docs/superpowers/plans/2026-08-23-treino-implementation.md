@@ -1087,6 +1087,17 @@ register_training_config(config)
 > (idempotente — `mkdirs` não falha se o diretório já existir) logo antes do
 > `mlflow.set_experiment(...)`.
 
+> **Correção (achado ao vivo, Task 13 — mesma rodada):** as três notebooks que leem as
+> tabelas de split (`fit_and_compare_hyperparams.py`, `select_best_and_test.py`,
+> `register_model.py`) calculavam `feature_cols` como "toda coluna exceto o label" —
+> isso inclui as colunas de `lookup_key` (ex.: `customer_id`), que são chaves de junção,
+> não features. `fit_and_compare_hyperparams` falhava com
+> `ValueError: could not convert string to float: 'c1'` ao tentar treinar com
+> `customer_id` (string) como feature numérica. Corrigido excluindo também os
+> `lookup_key` de todos os `config.feature_lookups`:
+> `feature_cols = [c for c in train_df.columns if c not in {config.label_column, *[fl.lookup_key for fl in config.feature_lookups]}]`
+> nas três notebooks.
+
 > **Correção (achado ao vivo, Task 13):** o compute serverless da Free Edition não vem
 > com `databricks-feature-engineering` pré-instalado — `requirements-dev.txt` só afeta
 > o `.venv` local, não o runtime remoto. O job falhou com
@@ -1232,7 +1243,7 @@ scratch_prefix = f"{catalog}.training_scratch.{model_name}"
 train_df = spark.table(f"{scratch_prefix}_train").toPandas()
 val_df = spark.table(f"{scratch_prefix}_val").toPandas()
 
-feature_cols = [c for c in train_df.columns if c != config.label_column]
+feature_cols = [c for c in train_df.columns if c not in {config.label_column, *[fl.lookup_key for fl in config.feature_lookups]}]
 X_train, y_train = train_df[feature_cols], train_df[config.label_column]
 X_val, y_val = val_df[feature_cols], val_df[config.label_column]
 
@@ -1316,7 +1327,7 @@ scratch_prefix = f"{catalog}.training_scratch.{model_name}"
 train_df = spark.table(f"{scratch_prefix}_train").toPandas()
 test_df = spark.table(f"{scratch_prefix}_test").toPandas()
 
-feature_cols = [c for c in train_df.columns if c != config.label_column]
+feature_cols = [c for c in train_df.columns if c not in {config.label_column, *[fl.lookup_key for fl in config.feature_lookups]}]
 X_train, y_train = train_df[feature_cols], train_df[config.label_column]
 X_test, y_test = test_df[feature_cols], test_df[config.label_column]
 
@@ -1420,7 +1431,7 @@ except Exception:
 # COMMAND ----------
 scratch_prefix = f"{catalog}.training_scratch.{model_name}"
 train_df = spark.table(f"{scratch_prefix}_train").toPandas()
-feature_cols = [c for c in train_df.columns if c != config.label_column]
+feature_cols = [c for c in train_df.columns if c not in {config.label_column, *[fl.lookup_key for fl in config.feature_lookups]}]
 X_train, y_train = train_df[feature_cols], train_df[config.label_column]
 
 estimator = config.algorithm(**best_hyperparameters)
