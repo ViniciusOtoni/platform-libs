@@ -66,7 +66,10 @@ metric_name = config.metric if isinstance(config.metric, str) else "custom_metri
 estimator = config.algorithm(**best_hyperparameters)
 pipeline = build_pipeline(config.custom_transforms, estimator)
 pipeline.fit(X_train, y_train)
-test_metric = float(scorer(pipeline, X_test, y_test))
+if len(X_test) > 0:
+    test_metric = float(scorer(pipeline, X_test, y_test))
+else:
+    test_metric = float("nan")
 
 findings = run_sanity_gate(test_metric, num_predictions=len(X_test))
 passed = gate_passed(findings)
