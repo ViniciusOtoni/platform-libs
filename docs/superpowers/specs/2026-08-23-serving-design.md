@@ -58,6 +58,21 @@ Domínios reais passam a viver em repositórios próprios, instalando este pacot
 semver, versionamento manual). O `.github/workflows/deploy.yml` passa a ser um caller
 fino do reusable workflow centralizado em `mlops-platform`.
 
+## 1.3 Emenda (2026-08-24, achada ao vivo na verificação ponta a ponta)
+
+O gate de qualidade da trilha batch (seção 5) foi desenhado só com "sem nulos na
+coluna de predição" — mas isso não pega o caso mais importante: uma entidade da spine
+de inferência sem correspondência na feature table (`FeatureLookup` sem match) recebe
+colunas de feature nulas, e o modelo (dependendo do algoritmo — `RandomForestClassifier`
+do scikit-learn, por exemplo, tolera `NaN` nativamente desde a versão 1.4) ainda assim
+produz uma predição não-nula, só que sem sentido algum. Verificado ao vivo: uma spine
+com um `customer_id` inexistente na feature table gerou `txn_count=NULL,
+avg_ticket=NULL, prediction=0.4015943427487544` — o gate original deixaria passar
+silenciosamente. Corrigido estendendo o gate para também checar nulos em **todas as
+colunas resolvidas pelo join** (chave de entidade, chave de timestamp e features), não
+só na coluna de predição. Ver
+`docs/superpowers/plans/2026-08-23-serving-implementation.md`, correção na Task 4.
+
 ## 2. Escopo
 
 **Dentro do escopo:**
@@ -172,7 +187,7 @@ evidência histórica no repositório da POC).
 | Resolução do alias | Automática a cada execução — o job sempre lê a versão vigente de `@{alias}` no momento em que roda. |
 | Schedule | Configurável (`schedule_cron`) — scoragem batch existe para rodar em cadência, diferente do treino (sempre sob demanda). |
 | Saída | `<catalog>.<domain>_predictions.<model_name>` — mesma convenção de nomenclatura de feature tables e modelos. **Escrita em `append`, com coluna `scored_at`** (timestamp da execução) — histórico apensado, não snapshot (emenda 1.1, motivada pelo Componente 4). |
-| Gate de qualidade | Bloqueante: sem nulos na coluna de predição; contagem de linhas de saída igual à da spine de entrada. Se falhar, nada é escrito. |
+| Gate de qualidade | Bloqueante: sem nulos na coluna de predição **nem em nenhuma coluna resolvida pelo join** (chave de entidade, chave de timestamp, features — emenda 1.3); contagem de linhas de saída igual à da spine de entrada. Se falhar, nada é escrito. |
 
 ## 6. Trilha online: endpoint e atualização de alias
 

@@ -437,6 +437,21 @@ git commit -m "feat: add predictions table and serving endpoint naming conventio
 
 ## Task 4: Gate de qualidade das predições (`quality.py`)
 
+> **Correção (2026-08-24, achada ao vivo na Task 9 — verificação ponta a ponta):** o
+> gate original só checava nulos na coluna de predição. Isso não pega o caso mais
+> importante: uma entidade da spine sem correspondência na feature table
+> (`FeatureLookup` sem match) recebe features nulas, e o modelo (ex.:
+> `RandomForestClassifier` do scikit-learn, que tolera `NaN` nativamente desde a versão
+> 1.4) ainda produz uma predição não-nula, só que sem sentido — o gate original deixaria
+> passar silenciosamente. Verificado ao vivo: uma spine com um `customer_id` inexistente
+> na feature table gerou `txn_count=NULL, avg_ticket=NULL,
+> prediction=0.4015943427487544`. Corrigido adicionando `check_no_nulls_in_joined_columns`,
+> que checa nulos em **todas as colunas exceto a de predição** (chave de entidade, chave
+> de timestamp, features) — e mudando `run_predictions_gate` para incluir esse terceiro
+> check. Isso exige que `score_batch.py` (Task 7) passe o DataFrame completo das
+> predições para o gate, não só a coluna de predição isolada — ver correção na Task 7.
+> Ver também `docs/superpowers/specs/2026-08-23-serving-design.md`, emenda 1.3.
+
 **Files:**
 - Create: `src/serving_platform/quality.py`
 - Test: `tests/test_quality.py`
@@ -450,6 +465,7 @@ import pandas as pd
 from serving_platform.quality import (
     Finding,
     check_no_nulls_in_predictions,
+    check_no_nulls_in_joined_columns,
     check_row_count_matches,
     run_predictions_gate,
     gate_passed,
@@ -466,6 +482,18 @@ def test_check_no_nulls_in_predictions_fails():
     assert check_no_nulls_in_predictions(df, "prediction").status == "FAIL"
 
 
+def test_check_no_nulls_in_joined_columns_passes():
+    df = pd.DataFrame({"customer_id": ["c1", "c2"], "txn_count": [3, 5], "prediction": [0.1, 0.9]})
+    assert check_no_nulls_in_joined_columns(df, "prediction").status == "PASS"
+
+
+def test_check_no_nulls_in_joined_columns_fails_on_unmatched_feature_lookup():
+    df = pd.DataFrame({"customer_id": ["c1", "c2"], "txn_count": [3, None], "prediction": [0.1, 0.9]})
+    finding = check_no_nulls_in_joined_columns(df, "prediction")
+    assert finding.status == "FAIL"
+    assert "txn_count" in finding.detail
+
+
 def test_check_row_count_matches_passes_when_equal():
     assert check_row_count_matches(100, 100).status == "PASS"
 
@@ -476,10 +504,14 @@ def test_check_row_count_matches_fails_when_different():
     assert "input=100" in finding.detail
 
 
-def test_run_predictions_gate_returns_both_checks():
-    df = pd.DataFrame({"prediction": [0.1, 0.9]})
+def test_run_predictions_gate_returns_all_checks():
+    df = pd.DataFrame({"customer_id": ["c1", "c2"], "prediction": [0.1, 0.9]})
     findings = run_predictions_gate(df, "prediction", input_row_count=2)
-    assert {f.check for f in findings} == {"no_nulls_in_predictions", "row_count_matches"}
+    assert {f.check for f in findings} == {
+        "no_nulls_in_predictions",
+        "no_nulls_in_joined_columns",
+        "row_count_matches",
+    }
 
 
 def test_gate_passed_true_when_all_pass():
@@ -520,6 +552,19 @@ def check_no_nulls_in_predictions(df: pd.DataFrame, prediction_column: str) -> F
     )
 
 
+def check_no_nulls_in_joined_columns(df: pd.DataFrame, prediction_column: str) -> Finding:
+    # Uma entidade sem correspondência no FeatureLookup recebe features nulas, mas o
+    # modelo pode ainda assim produzir uma predição não-nula (ex.: RandomForestClassifier
+    # tolera NaN nativamente) — checar só a coluna de predição não pega esse caso.
+    joined_cols = [c for c in df.columns if c != prediction_column]
+    bad_cols = [c for c in joined_cols if int(df[c].isnull().sum()) > 0]
+    return Finding(
+        check="no_nulls_in_joined_columns",
+        status="PASS" if not bad_cols else "FAIL",
+        detail=f"columns_with_nulls={bad_cols}" if bad_cols else "",
+    )
+
+
 def check_row_count_matches(input_row_count: int, output_row_count: int) -> Finding:
     matches = input_row_count == output_row_count
     return Finding(
@@ -532,6 +577,7 @@ def check_row_count_matches(input_row_count: int, output_row_count: int) -> Find
 def run_predictions_gate(df: pd.DataFrame, prediction_column: str, input_row_count: int) -> list[Finding]:
     return [
         check_no_nulls_in_predictions(df, prediction_column),
+        check_no_nulls_in_joined_columns(df, prediction_column),
         check_row_count_matches(input_row_count, len(df)),
     ]
 
@@ -543,7 +589,7 @@ def gate_passed(findings: list[Finding]) -> bool:
 - [ ] **Step 4: Rodar e confirmar sucesso**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/test_quality.py -v`
-Expected: `7 passed`
+Expected: `9 passed`
 
 - [ ] **Step 5: Commit**
 
@@ -978,7 +1024,10 @@ predictions_df = fe.score_batch(
 
 # COMMAND ----------
 prediction_column = "prediction"
-predictions_pd = predictions_df.select(prediction_column).toPandas()
+# DataFrame completo (não só a coluna de predição) — o gate agora também checa nulos
+# nas colunas resolvidas pelo join (chave de entidade, chave de timestamp, features),
+# não só na coluna de predição.
+predictions_pd = predictions_df.toPandas()
 findings = run_predictions_gate(predictions_pd, prediction_column, input_row_count)
 passed = gate_passed(findings)
 predictions_table = derive_predictions_table_name(catalog, config.domain, model_name)
