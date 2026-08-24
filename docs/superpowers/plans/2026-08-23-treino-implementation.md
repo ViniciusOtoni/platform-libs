@@ -1405,6 +1405,13 @@ training_set = fe.create_training_set(
 full_model_name = derive_model_name(catalog, config.domain, config.model_name)
 mlflow.set_registry_uri("databricks-uc")
 
+# Por analogia com o SCHEMA_NOT_FOUND já confirmado duas vezes (audit.py, writer.py do
+# feature-platform) ao escrever numa tabela de schema novo via saveAsTable — registrar
+# um modelo UC num schema novo provavelmente tem o mesmo requisito. Inferência ainda
+# não validada ao vivo; a Task 13 confirma se isso é necessário de fato.
+model_schema = full_model_name.rsplit(".", 1)[0]
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {model_schema}")
+
 with mlflow.start_run(run_id=mlflow_run_id):
     fe.log_model(
         model=wrapped_model,
