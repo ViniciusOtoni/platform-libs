@@ -86,6 +86,7 @@ def run_feature_table(
         spec.timestamp_key,
         mode,
         partition_cols=spec.entity_keys[:1],
+        enable_cdf=spec.online,
     )
     spark.sql(
         f"ALTER TABLE {table_name} SET TBLPROPERTIES "

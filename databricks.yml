@@ -14,6 +14,9 @@ variables:
   git_branch:
     description: Git branch of the deploy, propagated to job parameters for auditing.
     default: local
+  database_instance_name:
+    description: Lakebase Database Instance name for online=True feature tables. Only used when a feature table has online=True; ignored otherwise.
+    default: ""
 
 targets:
   dev:

@@ -32,7 +32,15 @@ def test_generate_job_resource_declares_job_parameters():
     job = resource["resources"]["jobs"]["feature_pipeline"]
     param_names = {p["name"] for p in job["parameters"]}
 
-    assert param_names == {"mode", "start_date", "end_date", "git_commit", "git_branch", "catalog"}
+    assert param_names == {
+        "mode",
+        "start_date",
+        "end_date",
+        "git_commit",
+        "git_branch",
+        "catalog",
+        "database_instance_name",
+    }
 
 
 def test_generate_job_resource_adds_depends_on_edge():

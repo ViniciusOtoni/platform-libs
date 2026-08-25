@@ -22,6 +22,7 @@ def write_feature_table(
     timestamp_key: str,
     mode: WriteMode,
     partition_cols: list[str],
+    enable_cdf: bool = False,
 ) -> None:
     """Escreve a feature table no Delta. Requer SparkSession com Delta habilitado —
     exercitado via notebook (Task 12), não via pytest."""
@@ -35,6 +36,11 @@ def write_feature_table(
     else:
         _overwrite_by_partition(spark, df, table_name, partition_cols)
     _ensure_primary_key(spark, table_name, entity_keys, timestamp_key)
+    if enable_cdf:
+        # A synced table do Lakebase (Online Feature Store) depende de Change Data
+        # Feed pra suportar atualizações incrementais — sem isso, create_synced_database_table
+        # falha com InvalidParameterValue. Só habilitado para feature tables com online=True.
+        spark.sql(f"ALTER TABLE {table_name} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
 
 
 def _merge(spark, df, table_name: str, entity_keys: list[str], timestamp_key: str) -> None:

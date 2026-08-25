@@ -8,7 +8,7 @@ from feature_platform.contract import feature_table
     entity_keys=["customer_id"],
     timestamp_key="feature_ts",
     sources=["raw.transactions"],
-    online=False,
+    online=True,
 )
 def customer_transaction_features(sources, window):
     raw = sources["raw.transactions"]

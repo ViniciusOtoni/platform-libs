@@ -6,6 +6,7 @@ dbutils.widgets.text("end_date", "")
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("git_commit", "local")
 dbutils.widgets.text("git_branch", "local")
+dbutils.widgets.text("database_instance_name", "")
 
 # COMMAND ----------
 # Num job deployado via DAB, o cwd do notebook é .../files/notebooks — nem a raiz
@@ -34,6 +35,7 @@ end_date = dbutils.widgets.get("end_date") or None
 catalog = dbutils.widgets.get("catalog")
 git_commit = dbutils.widgets.get("git_commit")
 git_branch = dbutils.widgets.get("git_branch")
+database_instance_name = dbutils.widgets.get("database_instance_name")
 # currentRunId() não está na whitelist do Py4J em compute serverless/shared access
 # mode — levanta Py4JSecurityException. Cai para um id gerado localmente quando o
 # contexto de job não expõe o run id dessa forma.
@@ -59,4 +61,5 @@ run_feature_table(
     git_branch=git_branch,
     backfill_start=start_date,
     backfill_end=end_date,
+    database_instance_name=database_instance_name,
 )

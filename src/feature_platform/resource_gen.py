@@ -11,6 +11,7 @@ _JOB_PARAMETERS = [
     {"name": "catalog", "default": "${var.catalog}"},
     {"name": "git_commit", "default": "${var.git_commit}"},
     {"name": "git_branch", "default": "${var.git_branch}"},
+    {"name": "database_instance_name", "default": "${var.database_instance_name}"},
 ]
 
 
@@ -30,6 +31,7 @@ def generate_job_resource(job_name: str = "feature_pipeline") -> dict:
                     "catalog": "{{job.parameters.catalog}}",
                     "git_commit": "{{job.parameters.git_commit}}",
                     "git_branch": "{{job.parameters.git_branch}}",
+                    "database_instance_name": "{{job.parameters.database_instance_name}}",
                 },
             },
         }
