@@ -1510,6 +1510,56 @@ SDK antes de rodar em produção** (passo de verificação no final desta task).
 > `database_instance` ao job seria expandir a superfície de um caminho ainda não
 > validável nesta sessão.
 
+> **Correção (2026-08-24, branch `fix/online-sync-database-instance` — validação de
+> ponta a ponta agora com um Database Instance real provisionado, `exemplo-lakebase`,
+> `CU_1`/`node_count=1`):** o caminho de sincronização online foi exercitado ao vivo e
+> revelou três bugs adicionais além do já documentado acima, todos corrigidos e
+> confirmados com o synced table chegando a `SYNCED_TABLE_ONLINE_NO_PENDING_UPDATE`:
+>
+> 1. **`scheduling_policy` precisa ser o enum, não a string pura.** `SyncedTableSpec`
+>    chama `.value` em `scheduling_policy` dentro do seu `as_dict()` — passar a string
+>    `"TRIGGERED"` direto quebra com `AttributeError: 'str' object has no attribute
+>    'value'`. `build_synced_table_spec()` continua retornando a string pura (mantém o
+>    teste original passando, sem depender do SDK), e `sync_online_table()` converte
+>    para `SyncedTableSchedulingPolicy(spec_fields["scheduling_policy"])` só na hora de
+>    montar o `SyncedTableSpec`.
+> 2. **`logicalDatabaseName` é obrigatório para "standard catalog".** Erro real:
+>    `InvalidParameterValue: logicalDatabaseName must be defined when creating synced
+>    table in a standard catalog`. Isso exige um **Database Catalog** do Lakebase já
+>    criado (mapeando um catalog UC para uma database lógica dentro do Database
+>    Instance — `databricks database create-database-catalog <catalog> <instance>
+>    <database> --create-database-if-not-exists`), e um novo parâmetro
+>    `logical_database_name`, threaded exatamente como `database_instance_name`:
+>    `sync_online_table()`, `run_feature_table()`, o widget do notebook, o job
+>    parameter em `resource_gen.py`, e a variável em `databricks.yml`.
+> 3. **A tabela de origem precisa de Change Data Feed habilitado.** Erro real:
+>    `InvalidParameterValue: Change Data Feed must be enabled on the source table ...
+>    Change Data Feed is required in order to support incremental updates from the
+>    delta table.` Isso já estava previsto informalmente no pedido original da
+>    plataforma ("também vamos precisar (...) habilitar o change data feed nas
+>    tabelas") mas nunca tinha sido implementado. Corrigido em `writer.py`:
+>    `write_feature_table()` ganhou um parâmetro `enable_cdf: bool = False`; quando
+>    `True`, roda `ALTER TABLE ... SET TBLPROPERTIES (delta.enableChangeDataFeed =
+>    true)` ao final da escrita (idempotente, seguro de repetir). `engine.py` passa
+>    `enable_cdf=spec.online`.
+>
+> **Um quarto problema, não é bug de código:** o arquivo `resources/generated_*.job.yml`
+> é gerado por `scripts/generate_resources.py` e **não é regenerado automaticamente**
+> por `databricks bundle deploy` — é gitignored e precisa rodar o script antes de cada
+> deploy que mude parâmetros do job (a CI do `mlops-platform` já faz isso
+> condicionalmente; um deploy manual direto, como o desta sessão, esqueceu o passo na
+> primeira tentativa e o parâmetro novo simplesmente não apareceu no job deployado,
+> sem erro nenhum). Vale como lembrete operacional, não como mudança de código.
+>
+> **Confirmado ao vivo, ponta a ponta:** `databricks database get-synced-database-table
+> workspace.exemplo_features.customer_transaction_features_online` retornou
+> `detailed_state: SYNCED_TABLE_ONLINE_NO_PENDING_UPDATE` após o backfill —
+> `online=True` está funcional de ponta a ponta nesta plataforma. O exemplo
+> (`examples/features.py`) foi atualizado para `online=True` na feature table
+> `customer_transaction_features`, e `notebooks/run_feature_table.py` /
+> `resource_gen.py` / `databricks.yml` agora expõem `database_instance_name` e
+> `logical_database_name`.
+
 **Files:**
 - Create: `src/feature_platform/online_sync.py`
 - Test: `tests/test_online_sync.py`
