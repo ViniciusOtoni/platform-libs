@@ -1557,8 +1557,39 @@ SDK antes de rodar em produção** (passo de verificação no final desta task).
 > `online=True` está funcional de ponta a ponta nesta plataforma. O exemplo
 > (`examples/features.py`) foi atualizado para `online=True` na feature table
 > `customer_transaction_features`, e `notebooks/run_feature_table.py` /
-> `resource_gen.py` / `databricks.yml` agora expõem `database_instance_name` e
-> `logical_database_name`.
+> `resource_gen.py` / `databricks.yml` agora expõem `database_instance_name`.
+>
+> **Correção (2026-08-24, achada validando o `serving-platform` contra este online
+> sync — o synced table existir e sincronizar não bastou):** com a synced table
+> criada usando `logical_database_name="exemplo_online"` (um Database Catalog dedicado,
+> separado do catalog UC `workspace` onde a feature table vive), o deploy de um
+> `model_serving_endpoint` com `FeatureLookup` automático falhou com "Online feature
+> store setup failed" — genérico via API, mas o assistente "Diagnose error" da própria
+> UI do Databricks revelou a causa real: **"Reading online tables whose Lakebase
+> database differs from its catalog name is not supported."** Ou seja,
+> `logical_database_name` não é um valor livre — **precisa ser sempre igual ao catalog
+> UC da tabela de origem** (`workspace`, neste caso), senão o synced table sincroniza
+> normalmente (esse bug não impede a criação nem a sincronização) mas fica invisível
+> para a resolução automática de `FeatureLookup` do Model Serving. Corrigido removendo
+> `logical_database_name` como parâmetro livre inteiramente: `sync_online_table()`
+> agora deriva `logical_database_name = table_name.split(".")[0]` a partir da própria
+> `table_name` — torna o mismatch estruturalmente impossível em vez de documentá-lo
+> como uma responsabilidade do operador. `notebooks/run_feature_table.py` /
+> `resource_gen.py` / `databricks.yml` voltaram a expor só `database_instance_name`.
+> Um Database Catalog cujo `database_name` seja igual ao catalog UC (aqui,
+> `databricks database create-database-catalog <nome> <instance> workspace
+> --create-database-if-not-exists`) continua sendo pré-requisito de infraestrutura,
+> assim como `database_instance_name`.
+>
+> **Confirmado ao vivo, ponta a ponta, incluindo o Model Serving endpoint:** depois da
+> correção, um `model_serving_endpoint` de teste (`serving-platform`, `mode="online"`)
+> foi deployado com sucesso (`DEPLOYMENT_READY`) e consultado com
+> `{"customer_id": "c1", "reference_date": "2026-08-24"}` — **sem** `txn_count` nem
+> `avg_ticket` no payload — retornando uma predição real, confirmando que o
+> `FeatureLookup` foi resolvido automaticamente contra o Online Feature Store (Lakebase)
+> em tempo de inferência. O endpoint e o Online Store de teste extra criado durante a
+> investigação foram derrubados ao final para não gerar custo contínuo. Ver o plano do
+> `serving-platform` (Task 9, Step 5) para o registro completo dessa verificação.
 
 **Files:**
 - Create: `src/feature_platform/online_sync.py`
