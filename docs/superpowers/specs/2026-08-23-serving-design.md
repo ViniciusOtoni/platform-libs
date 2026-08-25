@@ -73,7 +73,7 @@ colunas resolvidas pelo join** (chave de entidade, chave de timestamp e features
 só na coluna de predição. Ver
 `docs/superpowers/plans/2026-08-23-serving-implementation.md`, correção na Task 4.
 
-## 1.4 Emenda (2026-08-24, trilha online — risco da seção 6 parcialmente confirmado)
+## 1.4 Emenda (2026-08-24, trilha online — risco da seção 6 confirmado, ver 1.5 para o fechamento)
 
 A verificação ao vivo da trilha online (Task 9, Step 5) confirmou **dois** dos riscos
 documentados na seção 6, e revelou um terceiro não previsto:
@@ -98,13 +98,44 @@ documentados na seção 6, e revelou um terceiro não previsto:
    parte (recurso standalone, cobrado, ainda em Public Preview), fora do escopo desta
    verificação.
 
-**Conclusão:** a resolução automática de `FeatureLookup` num Model Serving endpoint via
-Online Feature Store/Lakebase **continua não validada de ponta a ponta** — o passo
-imediatamente anterior a essa validação (sincronizar a feature table como Online
-Table) tem um bug confirmado e uma dependência de infraestrutura não provisionada.
-Corrigida a assinatura da chamada em `feature-platform` (ver o plano daquele
-repositório), mas a validação completa fica pendente de uma decisão explícita de
-provisionar um Database Instance — não tomada nesta sessão.
+**Conclusão (2026-08-24, na época desta emenda):** a resolução automática de
+`FeatureLookup` num Model Serving endpoint via Online Feature Store/Lakebase
+**continuava não validada de ponta a ponta** — o passo imediatamente anterior a essa
+validação (sincronizar a feature table como Online Table) tinha um bug confirmado e
+uma dependência de infraestrutura não provisionada. Corrigida a assinatura da chamada
+em `feature-platform` (ver o plano daquele repositório), mas a validação completa
+ficou pendente de uma decisão explícita de provisionar um Database Instance — não
+tomada nesta sessão. **Ver seção 1.5 para o fechamento completo desta validação.**
+
+## 1.5 Emenda (2026-08-24, trilha online — risco da seção 6 confirmado de ponta a ponta)
+
+O usuário autorizou explicitamente provisionar um Database Instance real do Lakebase
+(`exemplo-lakebase`, `CU_1`) para fechar a lacuna da emenda 1.4. Isso revelou mais três
+bugs — todos em `feature-platform`, não neste repositório (ver o plano daquele
+repositório para o detalhe de cada um): `scheduling_policy` do SDK precisando ser o
+enum, não string pura; Change Data Feed não habilitado na tabela de origem (pré-
+requisito documentado no pedido original da plataforma, nunca implementado); e um
+mismatch entre a Lakebase `database_name` da synced table e o catalog UC da tabela de
+origem — este último só detectável tentando de fato o deploy do endpoint online (a
+synced table sincroniza normalmente mesmo com o mismatch; só a resolução automática de
+`FeatureLookup` do Model Serving falha, com "Online feature store setup failed",
+diagnosticado via o assistente "Diagnose error" da UI do Databricks). Todos corrigidos.
+
+Com as quatro correções aplicadas, um `ServingConfig` de teste (`mode="online"`, numa
+branch descartável `verify/online-endpoint-lakebase`) foi deployado e chegou a
+`DEPLOYMENT_READY`. Uma chamada de teste com `{"customer_id": "c1", "reference_date":
+"2026-08-24"}` — **sem** `txn_count` nem `avg_ticket` no payload — retornou uma
+predição real (`0.5021823421676364`).
+
+**Conclusão final:** o risco da seção 6 está **confirmado, não uma suposição**: a
+resolução automática de `FeatureLookup` num Model Serving endpoint padrão contra o
+Online Feature Store (Lakebase) funciona como desenhado, desde que a infraestrutura
+Lakebase (Database Instance + Database Catalog com `database_name` igual ao catalog UC
+da tabela de origem, mais Change Data Feed habilitado na tabela) esteja corretamente
+provisionada — pré-requisitos agora impostos estruturalmente pelo código de
+`feature-platform`, não deixados como responsabilidade documental do operador. Endpoint
+de teste e recursos extras derrubados ao final do teste para não incorrer em custo
+contínuo; o exemplo permanente deste repositório continua `mode="batch"`.
 
 ## 2. Escopo
 

@@ -1436,21 +1436,45 @@ git commit -m "docs: add README with usage instructions and known risks"
   encontrado e ajustar o spec antes de prosseguir. **Derrubar o endpoint manualmente ao
   final do teste** para não incorrer em custo contínuo.
 
-  **Parcialmente concluído — ver spec, emenda 1.4.** O deploy do endpoint em si exigiu
-  uma correção real (Task 6 — `model_serving_endpoints` não aceita `@alias` em
+  **Concluído (2026-08-24, ciclo final).** O deploy do endpoint em si exigiu uma
+  correção real (Task 6 — `model_serving_endpoints` não aceita `@alias` em
   `entity_name`, corrigido resolvendo para `entity_version` numérico via
   `get_by_alias`). Depois disso, o deploy falhou com "Online feature store setup
-  failed": a feature table de exemplo tem `online=False` (nunca foi sincronizada como
-  Online Table), e investigar revelou um bug real em `feature-platform`'s
+  failed": a feature table de exemplo tinha `online=False` (nunca foi sincronizada
+  como Online Table), e investigar revelou um bug real em `feature-platform`'s
   `online_sync.py` (assinatura de `create_synced_database_table` incorreta) **mais**
   uma dependência de infraestrutura não provisionada (nenhum Database Instance do
-  Lakebase existe neste workspace — provisionar um é uma decisão à parte, recurso
-  cobrado e em Public Preview). Corrigida a assinatura em `feature-platform` (ver o
-  plano daquele repositório); a validação completa da resolução automática de
-  `FeatureLookup` num endpoint online **continua não confirmada**, pendente de uma
-  decisão explícita do usuário sobre provisionar o Database Instance. Endpoint de
-  teste derrubado (`databricks serving-endpoints delete`), exemplo revertido para
-  `mode="batch"` (o exemplo permanente, sem custo de endpoint sempre ligado).
+  Lakebase existia no workspace). O usuário autorizou explicitamente provisionar um
+  Database Instance real (`exemplo-lakebase`, `CU_1`) para fechar essa lacuna.
+  Corrigida a assinatura em `feature-platform` e, com o Database Instance
+  provisionado, mais dois bugs surgiram e foram corrigidos lá (ver o plano daquele
+  repositório): `scheduling_policy` precisando do enum do SDK, e Change Data Feed
+  não habilitado na tabela de origem. Com a synced table sincronizando, um **quarto**
+  bug apareceu — este só visível ao tentar de fato o deploy do endpoint online, e por
+  isso registrado aqui: o deploy falhou de novo com "Online feature store setup
+  failed" mesmo com a synced table saudável; o assistente "Diagnose error" da UI do
+  Databricks revelou a causa real — a Lakebase (Postgres) `database_name` da synced
+  table (`exemplo_online`, um Database Catalog dedicado) diferia do catalog UC da
+  tabela de origem (`workspace`), e "reading online tables whose Lakebase database
+  differs from its catalog name is not supported". Corrigido em `feature-platform`
+  derivando `logical_database_name` sempre do catalog da própria tabela, eliminando o
+  parâmetro livre que permitia esse mismatch.
+  
+  Depois dessa correção, o deploy do endpoint online (`mode="online"`, `ServingConfig`
+  de teste) chegou a `DEPLOYMENT_READY`, e uma chamada de teste com
+  `{"customer_id": "c1", "reference_date": "2026-08-24"}` — **sem** `txn_count` nem
+  `avg_ticket` no payload — retornou uma predição real (`0.5021823421676364`),
+  confirmando que o `FeatureLookup` foi resolvido automaticamente contra o Online
+  Feature Store (Lakebase) em tempo de inferência. **O risco do spec (seção 6) está
+  confirmado: a resolução automática de `FeatureLookup` num endpoint de Model Serving
+  padrão contra o Online Feature Store funciona como assumido**, desde que a Lakebase
+  `database_name` da synced table seja igual ao catalog UC da tabela de origem.
+  Endpoint de teste e o Online Store extra criado durante a investigação foram
+  derrubados ao final (`databricks serving-endpoints delete` /
+  `databricks feature-store delete-online-store`) para não incorrer em custo
+  contínuo. O exemplo permanente deste repositório (`examples/serving_configs.py`)
+  permanece `mode="batch"` — a verificação online foi feita numa branch descartável
+  (`verify/online-endpoint-lakebase`), não incorporada ao exemplo padrão.
 
 ---
 
