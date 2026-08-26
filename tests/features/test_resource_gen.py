@@ -65,16 +65,51 @@ def test_generate_job_resource_adds_depends_on_edge():
     assert tasks["derived_feature"]["depends_on"] == [{"task_key": "base_feature"}]
 
 
-def test_generate_job_resource_points_notebook_task_to_relative_path():
+def test_task_invokes_the_framework_entry_point_not_a_notebook():
+    """O domínio não carrega mais notebook nenhum: a task chama o console script
+    do wheel do framework."""
+
     @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
     def feature_a(sources, window):
         return None
 
-    resource = generate_job_resource(job_name="feature_pipeline")
-    task = resource["resources"]["jobs"]["feature_pipeline"]["tasks"][0]
+    task = generate_job_resource(job_name="feature_pipeline")["resources"]["jobs"]["feature_pipeline"]["tasks"][0]
 
-    assert task["notebook_task"]["notebook_path"] == "../notebooks/run_feature_table.py"
-    assert task["notebook_task"]["base_parameters"]["feature_table"] == "feature_a"
+    assert "notebook_task" not in task
+    wheel = task["python_wheel_task"]
+    assert (wheel["package_name"], wheel["entry_point"]) == ("mlplatform", "mlp-run-feature-table")
+    assert wheel["named_parameters"]["feature-table"] == "feature_a"
+
+
+def test_task_carries_the_entry_point_name_not_the_spec_domain():
+    """Regressão de um bug que só aparecia em runtime, dentro do job: o gerador
+    emitia `--domain` com o campo `domain` da spec ("credito"), mas
+    `load_domains(only=...)` casa contra o nome do entry point declarado no
+    pyproject ("credito_features"). O YAML era válido e o job falhava com
+    DomainLoadError na primeira execução."""
+
+    @feature_table(domain="credito", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    def feature_a(sources, window):
+        return None
+
+    task = generate_job_resource(domain_entry_point="credito_features")["resources"]["jobs"]["feature_pipeline"][
+        "tasks"
+    ][0]
+
+    assert task["python_wheel_task"]["named_parameters"]["domain"] == "credito_features"
+
+
+def test_task_omits_domain_when_none_was_declared():
+    """Sem entry point declarado, o job carrega todos os domínios instalados —
+    mas não inventa um nome que não existe."""
+
+    @feature_table(domain="credito", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    def feature_a(sources, window):
+        return None
+
+    task = generate_job_resource()["resources"]["jobs"]["feature_pipeline"]["tasks"][0]
+
+    assert "domain" not in task["python_wheel_task"]["named_parameters"]
 
 
 def test_feature_resource_generator_writes_the_same_resource_to_disk(tmp_path):
@@ -90,15 +125,31 @@ def test_feature_resource_generator_writes_the_same_resource_to_disk(tmp_path):
     assert "feature_a" in content
 
 
-def test_generate_job_resource_without_environment_dependencies_omits_environments():
+def test_dependencies_default_to_the_domain_wheel_plus_the_installed_framework():
+    """Antes cada script de domínio hardcodava a URL do wheel, e ela
+    dessincronizava da versão realmente instalada. Agora o default é derivado de
+    importlib.metadata, que é a verdade sobre o que vai rodar."""
+    from mlplatform.core.wheels import DOMAIN_WHEEL_GLOB, framework_version
+
     @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
     def feature_a(sources, window):
         return None
 
     job = generate_job_resource(job_name="feature_pipeline")["resources"]["jobs"]["feature_pipeline"]
+    deps = job["environments"][0]["spec"]["dependencies"]
 
-    assert "environments" not in job
-    assert "environment_key" not in job["tasks"][0]
+    assert deps[0] == DOMAIN_WHEEL_GLOB
+    assert framework_version() in deps[1]
+    assert job["tasks"][0]["environment_key"] == "default"
+
+
+def test_domain_wheel_path_is_relative_to_the_generated_file_not_the_bundle_root():
+    """Regressão do deploy quebrado: o YAML gerado mora em resources/, então um
+    './dist/*.whl' resolveria para resources/dist/ e o deploy falha com
+    'no files match pattern'."""
+    from mlplatform.core.wheels import DOMAIN_WHEEL_GLOB
+
+    assert DOMAIN_WHEEL_GLOB.startswith("../")
 
 
 def test_generate_job_resource_with_environment_dependencies_declares_native_environment():

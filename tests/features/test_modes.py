@@ -1,5 +1,5 @@
 
-from mlplatform.features.writer import WriteMode, write_strategy_for
+from mlplatform.features.modes import WriteMode, write_strategy_for
 
 
 def test_incremental_uses_merge_strategy():
