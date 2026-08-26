@@ -88,3 +88,28 @@ def test_feature_resource_generator_writes_the_same_resource_to_disk(tmp_path):
     content = out.read_text(encoding="utf-8")
     assert "feature_pipeline" in content
     assert "feature_a" in content
+
+
+def test_generate_job_resource_without_environment_dependencies_omits_environments():
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    def feature_a(sources, window):
+        return None
+
+    job = generate_job_resource(job_name="feature_pipeline")["resources"]["jobs"]["feature_pipeline"]
+
+    assert "environments" not in job
+    assert "environment_key" not in job["tasks"][0]
+
+
+def test_generate_job_resource_with_environment_dependencies_declares_native_environment():
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    def feature_a(sources, window):
+        return None
+
+    deps = ["../dist/exemplo_features-0.1.0-py3-none-any.whl", "https://example.com/feature_platform-0.1.1.whl"]
+    job = generate_job_resource(job_name="feature_pipeline", environment_dependencies=deps)["resources"]["jobs"][
+        "feature_pipeline"
+    ]
+
+    assert job["environments"] == [{"environment_key": "default", "spec": {"client": "3", "dependencies": deps}}]
+    assert job["tasks"][0]["environment_key"] == "default"
