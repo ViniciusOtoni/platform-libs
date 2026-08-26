@@ -23,7 +23,20 @@ _VARIABLE_DOCS = {
 }
 
 
-def bundle_name(domain: str, component: str) -> str:
+def bundle_name(domain: str, component: str, domain_package: str | None = None) -> str:
+    """Nome do bundle.
+
+    Deriva de `domain_package` quando ele existe, porque domínio+componente NÃO
+    é único: um mesmo componente pode ter mais de um bundle — serving tem batch e
+    online. Os dois virariam "exemplo-serving", colidiriam no mesmo caminho do
+    workspace e um sobrescreveria o outro no deploy.
+
+    O nome do entry point é único por bundle por construção, e a conversão
+    underscore→hífen reproduz exatamente os nomes que já existiam
+    (exemplo_serving_batch -> exemplo-serving-batch).
+    """
+    if domain_package:
+        return domain_package.replace("_", "-")
     return f"{domain}-{component}"
 
 
@@ -48,7 +61,7 @@ def generate_bundle(settings: BundleSettings, domain: str, component: str, wheel
         }
 
     return {
-        "bundle": {"name": bundle_name(domain, component)},
+        "bundle": {"name": bundle_name(domain, component, settings.domain_package)},
         "include": ["resources/*.yml"],
         "artifacts": {
             wheel_name: {
