@@ -6,3 +6,6 @@ __pycache__/
 .databricks/
 mlruns/
 *.egg-info/
+
+build/
+dist/

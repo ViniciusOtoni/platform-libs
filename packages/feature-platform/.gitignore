@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 .databricks/
 resources/generated_*.yml
+
+build/
+dist/
