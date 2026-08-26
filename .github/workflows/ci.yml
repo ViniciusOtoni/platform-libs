@@ -5,35 +5,8 @@ on:
     branches: [main]
 
 jobs:
-  detect-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      packages: ${{ steps.filter.outputs.changes }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            platform-core:
-              - 'packages/platform-core/**'
-            feature-platform:
-              - 'packages/feature-platform/**'
-            training-platform:
-              - 'packages/training-platform/**'
-            serving-platform:
-              - 'packages/serving-platform/**'
-            monitoring-platform:
-              - 'packages/monitoring-platform/**'
-
   ci:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.packages != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        package: ${{ fromJson(needs.detect-changes.outputs.packages) }}
     uses: ViniciusOtoni/mlops-platform/.github/workflows/ci-validate.yml@main
     with:
-      working-directory: packages/${{ matrix.package }}
+      working-directory: .
     secrets: inherit
