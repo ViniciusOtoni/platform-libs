@@ -15,7 +15,19 @@ _JOB_PARAMETERS = [
 ]
 
 
-def generate_job_resource(job_name: str = "feature_pipeline") -> dict:
+_ENVIRONMENT_KEY = "default"
+
+
+def generate_job_resource(
+    job_name: str = "feature_pipeline",
+    environment_dependencies: list[str] | None = None,
+) -> dict:
+    """environment_dependencies: se dado, declara um Environment nativo do
+    serverless (client "3") com essas dependências (ex.: URL do wheel do
+    domínio + URL do wheel de feature-platform publicado como asset de
+    Release) e referencia esse environment em cada task — substitui
+    `%pip install`/sys.path hack dentro do notebook por resolução declarativa
+    do próprio job, sem cluster/venv manual."""
     registry = get_registry()
     tasks = []
     for name, spec in registry.items():
@@ -37,30 +49,40 @@ def generate_job_resource(job_name: str = "feature_pipeline") -> dict:
         }
         if spec.depends_on:
             task["depends_on"] = [{"task_key": dep} for dep in spec.depends_on]
+        if environment_dependencies:
+            task["environment_key"] = _ENVIRONMENT_KEY
         tasks.append(task)
 
-    return {
-        "resources": {
-            "jobs": {
-                job_name: {
-                    "name": job_name,
-                    "parameters": _JOB_PARAMETERS,
-                    "tasks": tasks,
-                }
-            }
-        }
+    job: dict = {
+        "name": job_name,
+        "parameters": _JOB_PARAMETERS,
+        "tasks": tasks,
     }
+    if environment_dependencies:
+        job["environments"] = [
+            {
+                "environment_key": _ENVIRONMENT_KEY,
+                "spec": {"client": "3", "dependencies": list(environment_dependencies)},
+            }
+        ]
+
+    return {"resources": {"jobs": {job_name: job}}}
 
 
-def write_job_resource(path: str, job_name: str = "feature_pipeline") -> None:
-    dump_yaml(generate_job_resource(job_name), path)
+def write_job_resource(
+    path: str,
+    job_name: str = "feature_pipeline",
+    environment_dependencies: list[str] | None = None,
+) -> None:
+    dump_yaml(generate_job_resource(job_name, environment_dependencies), path)
 
 
 class FeatureResourceGenerator:
     """Implementa platform_core.resource_gen.ResourceGenerator."""
 
-    def __init__(self, job_name: str = "feature_pipeline"):
+    def __init__(self, job_name: str = "feature_pipeline", environment_dependencies: list[str] | None = None):
         self.job_name = job_name
+        self.environment_dependencies = environment_dependencies
 
     def write(self, path: str) -> None:
-        write_job_resource(path, self.job_name)
+        write_job_resource(path, self.job_name, self.environment_dependencies)
