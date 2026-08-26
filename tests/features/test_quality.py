@@ -2,13 +2,12 @@ from datetime import date
 
 import pandas as pd
 
+from mlplatform.core.quality import Finding, gate_passed
 from mlplatform.features.quality import (
-    Finding,
     check_freshness,
     check_no_nulls,
     check_schema,
     check_unique_keys,
-    gate_passed,
     run_quality_gate,
 )
 

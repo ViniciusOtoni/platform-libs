@@ -1,11 +1,10 @@
 import pandas as pd
 
+from mlplatform.core.quality import Finding, gate_passed
 from mlplatform.serving.quality import (
-    Finding,
     check_no_nulls_in_joined_columns,
     check_no_nulls_in_predictions,
     check_row_count_matches,
-    gate_passed,
     run_predictions_gate,
 )
 

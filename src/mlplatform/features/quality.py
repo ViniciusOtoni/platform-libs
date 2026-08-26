@@ -1,15 +1,8 @@
-from dataclasses import dataclass
 from datetime import date
 
 import pandas as pd
 
-
-@dataclass(frozen=True)
-class Finding:
-    check: str
-    status: str  # "PASS" ou "FAIL"
-    violations: int
-    detail: str = ""
+from mlplatform.core.quality import Finding
 
 
 def check_schema(df: pd.DataFrame, expected_columns: list[str]) -> Finding:
@@ -69,6 +62,3 @@ def run_quality_gate(
         check_freshness(df, timestamp_key, window_end),
     ]
 
-
-def gate_passed(findings: list[Finding]) -> bool:
-    return all(f.status == "PASS" for f in findings)

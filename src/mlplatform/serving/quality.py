@@ -1,13 +1,7 @@
-from dataclasses import dataclass
 
 import pandas as pd
 
-
-@dataclass(frozen=True)
-class Finding:
-    check: str
-    status: str  # "PASS" ou "FAIL"
-    detail: str = ""
+from mlplatform.core.quality import Finding
 
 
 def check_no_nulls_in_predictions(df: pd.DataFrame, prediction_column: str) -> Finding:
@@ -48,6 +42,3 @@ def run_predictions_gate(df: pd.DataFrame, prediction_column: str, input_row_cou
         check_row_count_matches(input_row_count, len(df)),
     ]
 
-
-def gate_passed(findings: list[Finding]) -> bool:
-    return all(f.status == "PASS" for f in findings)

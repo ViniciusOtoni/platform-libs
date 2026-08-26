@@ -1,10 +1,9 @@
 import math
 
+from mlplatform.core.quality import Finding, gate_passed
 from mlplatform.training.quality import (
-    Finding,
     check_metric_is_finite,
     check_predictions_not_empty,
-    gate_passed,
     run_sanity_gate,
 )
 
