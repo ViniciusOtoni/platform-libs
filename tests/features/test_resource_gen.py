@@ -78,7 +78,23 @@ def test_task_invokes_the_framework_entry_point_not_a_notebook():
     assert "notebook_task" not in task
     wheel = task["python_wheel_task"]
     assert (wheel["package_name"], wheel["entry_point"]) == ("mlplatform", "mlp-run-feature-table")
-    assert wheel["named_parameters"]["feature-table"] == "feature_a"
+    assert wheel["named_parameters"]["feature_table"] == "feature_a"
+
+
+def test_named_parameters_carry_only_what_is_static_per_task():
+    """O Databricks injeta os job parameters no python_wheel_task sozinho.
+    Declará-los também aqui os passaria duas vezes, e o argparse morre com
+    'unrecognized arguments' — foi assim que o primeiro run real falhou."""
+
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    def feature_a(sources, window):
+        return None
+
+    named = generate_job_resource(domain_entry_point="exemplo_features")["resources"]["jobs"]["feature_pipeline"][
+        "tasks"
+    ][0]["python_wheel_task"]["named_parameters"]
+
+    assert set(named) == {"domain", "feature_table"}
 
 
 def test_task_carries_the_entry_point_name_not_the_spec_domain():

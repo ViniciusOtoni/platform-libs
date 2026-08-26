@@ -31,21 +31,14 @@ def _task(name: str, domain_entry_point: str | None) -> dict:
     spec aqui gerava um YAML que só falhava em runtime, dentro do job, com
     DomainLoadError.
     """
+    # Só o que é estático por task. O Databricks injeta os job parameters como
+    # `--<nome>=<valor>` no python_wheel_task automaticamente — declará-los aqui
+    # também os passaria DUAS vezes, e o argparse morre com "unrecognized
+    # arguments". Foi assim que o primeiro run real falhou.
     named: dict[str, str] = {}
     if domain_entry_point:
         named["domain"] = domain_entry_point
-    named.update(
-        {
-            "feature-table": name,
-            "mode": "{{job.parameters.mode}}",
-            "start-date": "{{job.parameters.start_date}}",
-            "end-date": "{{job.parameters.end_date}}",
-            "catalog": "{{job.parameters.catalog}}",
-            "git-commit": "{{job.parameters.git_commit}}",
-            "git-branch": "{{job.parameters.git_branch}}",
-            "database-instance-name": "{{job.parameters.database_instance_name}}",
-        }
-    )
+    named["feature_table"] = name
     return {
         "task_key": name,
         "python_wheel_task": {

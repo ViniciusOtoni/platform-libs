@@ -43,11 +43,14 @@ def _run_id(default: str = "local") -> str:
 
 
 def _common_args(parser: argparse.ArgumentParser) -> None:
+    # Flags com underscore, não hífen: o Databricks injeta os job parameters
+    # como `--<nome>=<valor>` no python_wheel_task, e os nomes deles usam
+    # underscore. Com hífen, o argparse rejeita tudo o que o job manda.
     parser.add_argument("--domain", help="nome do entry point do domínio a carregar")
-    parser.add_argument("--config-module", help="escape hatch: importa o módulo de configs direto")
+    parser.add_argument("--config_module", help="escape hatch: importa o módulo de configs direto")
     parser.add_argument("--catalog", default="workspace")
-    parser.add_argument("--git-commit", default="local")
-    parser.add_argument("--git-branch", default="local")
+    parser.add_argument("--git_commit", default="local")
+    parser.add_argument("--git_branch", default="local")
 
 
 def _load(args: argparse.Namespace) -> None:
@@ -65,11 +68,11 @@ def run_feature_table(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="mlp-run-feature-table")
     _common_args(parser)
-    parser.add_argument("--feature-table", required=True)
+    parser.add_argument("--feature_table", required=True)
     parser.add_argument("--mode", default=WriteMode.INCREMENTAL, type=WriteMode)
-    parser.add_argument("--start-date")
-    parser.add_argument("--end-date")
-    parser.add_argument("--database-instance-name", default="")
+    parser.add_argument("--start_date")
+    parser.add_argument("--end_date")
+    parser.add_argument("--database_instance_name", default="")
     args = parser.parse_args(argv)
 
     _load(args)
@@ -112,7 +115,7 @@ def generate_resources(argv: list[str] | None = None) -> int:
     _common_args(parser)
     parser.add_argument("--component", required=True, choices=["features"])
     parser.add_argument("--out", required=True)
-    parser.add_argument("--job-name", default="feature_pipeline")
+    parser.add_argument("--job_name", default="feature_pipeline")
     args = parser.parse_args(argv)
 
     _load(args)
