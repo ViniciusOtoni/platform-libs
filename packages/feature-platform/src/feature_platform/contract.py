@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from platform_core.registry import Registry
+
 
 @dataclass(frozen=True)
 class FeatureTableSpec:
@@ -15,7 +17,7 @@ class FeatureTableSpec:
     table_name: Optional[str] = None
 
 
-_REGISTRY: dict[str, FeatureTableSpec] = {}
+_registry: Registry[FeatureTableSpec] = Registry(kind="feature table")
 
 
 def feature_table(
@@ -40,17 +42,15 @@ def feature_table(
             depends_on=list(depends_on or []),
             table_name=table_name,
         )
-        if spec.name in _REGISTRY:
-            raise ValueError(f"feature table '{spec.name}' already registered")
-        _REGISTRY[spec.name] = spec
+        _registry.register(spec.name, spec)
         return fn
 
     return decorator
 
 
 def get_registry() -> dict[str, FeatureTableSpec]:
-    return dict(_REGISTRY)
+    return _registry.all()
 
 
 def clear_registry() -> None:
-    _REGISTRY.clear()
+    _registry.clear()

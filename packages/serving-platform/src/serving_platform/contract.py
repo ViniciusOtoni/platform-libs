@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from platform_core.registry import Registry
+
 _VALID_MODES = ("online", "batch")
 
 
@@ -20,22 +22,20 @@ class ServingConfig:
             raise ValueError("mode='batch' requires spine_inference_table and schedule_cron")
 
 
-_REGISTRY: dict[str, ServingConfig] = {}
+_registry: Registry[ServingConfig] = Registry(kind="serving config")
 
 
 def register_serving_config(config: ServingConfig) -> None:
-    if config.model_name in _REGISTRY:
-        raise ValueError(f"serving config '{config.model_name}' already registered")
-    _REGISTRY[config.model_name] = config
+    _registry.register(config.model_name, config)
 
 
 def get_serving_config(model_name: str) -> ServingConfig:
-    return _REGISTRY[model_name]
+    return _registry.get(model_name)
 
 
 def get_registry() -> dict[str, ServingConfig]:
-    return dict(_REGISTRY)
+    return _registry.all()
 
 
 def clear_registry() -> None:
-    _REGISTRY.clear()
+    _registry.clear()

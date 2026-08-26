@@ -1,6 +1,4 @@
-import re
-
-_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+from platform_core.naming import validate_qualified_name
 
 
 def derive_table_name(catalog: str, domain: str, function_name: str) -> str:
@@ -9,11 +7,7 @@ def derive_table_name(catalog: str, domain: str, function_name: str) -> str:
 
 
 def validate_table_name(table_name: str) -> None:
-    if not _NAME_RE.match(table_name):
-        raise ValueError(
-            f"table_name '{table_name}' does not match convention "
-            "'<catalog>.<schema>.<table>' (lowercase letters, digits, underscore)"
-        )
+    validate_qualified_name(table_name, kind="table_name")
 
 
 def resolve_table_name(catalog: str, domain: str, function_name: str, table_name: str | None) -> str:

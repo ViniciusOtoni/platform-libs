@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional
 
+from platform_core.registry import Registry
+
 
 @dataclass(frozen=True)
 class FeatureLookupSpec:
@@ -36,22 +38,20 @@ class TrainingConfig:
             )
 
 
-_REGISTRY: dict[str, TrainingConfig] = {}
+_registry: Registry[TrainingConfig] = Registry(kind="training config")
 
 
 def register_training_config(config: TrainingConfig) -> None:
-    if config.model_name in _REGISTRY:
-        raise ValueError(f"training config '{config.model_name}' already registered")
-    _REGISTRY[config.model_name] = config
+    _registry.register(config.model_name, config)
 
 
 def get_training_config(model_name: str) -> TrainingConfig:
-    return _REGISTRY[model_name]
+    return _registry.get(model_name)
 
 
 def get_registry() -> dict[str, TrainingConfig]:
-    return dict(_REGISTRY)
+    return _registry.all()
 
 
 def clear_registry() -> None:
-    _REGISTRY.clear()
+    _registry.clear()

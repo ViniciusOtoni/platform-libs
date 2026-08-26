@@ -3,12 +3,11 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "serving-platform"
+name = "platform-core"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6.0",
-    "platform-core @ git+https://github.com/ViniciusOtoni/platform-libs@platform-core-v0.1.0#subdirectory=packages/platform-core",
 ]
 
 [tool.setuptools.packages.find]

@@ -1,4 +1,4 @@
-import yaml
+from platform_core.resource_gen import dump_yaml
 
 from .contract import get_registry
 
@@ -53,6 +53,14 @@ def generate_job_resource(job_name: str = "feature_pipeline") -> dict:
 
 
 def write_job_resource(path: str, job_name: str = "feature_pipeline") -> None:
-    resource = generate_job_resource(job_name)
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(resource, f, sort_keys=False)
+    dump_yaml(generate_job_resource(job_name), path)
+
+
+class FeatureResourceGenerator:
+    """Implementa platform_core.resource_gen.ResourceGenerator."""
+
+    def __init__(self, job_name: str = "feature_pipeline"):
+        self.job_name = job_name
+
+    def write(self, path: str) -> None:
+        write_job_resource(path, self.job_name)

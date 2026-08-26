@@ -9,6 +9,7 @@ requires-python = ">=3.11"
 dependencies = [
     "scikit-learn>=1.4",
     "mlflow>=3.15.0",
+    "platform-core @ git+https://github.com/ViniciusOtoni/platform-libs@platform-core-v0.1.0#subdirectory=packages/platform-core",
 ]
 
 [tool.setuptools.packages.find]

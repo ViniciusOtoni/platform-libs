@@ -1,6 +1,4 @@
-import re
-
-_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+from platform_core.naming import validate_qualified_name
 
 
 def derive_model_name(catalog: str, domain: str, model_name: str) -> str:
@@ -9,8 +7,4 @@ def derive_model_name(catalog: str, domain: str, model_name: str) -> str:
 
 
 def validate_model_name(full_name: str) -> None:
-    if not _NAME_RE.match(full_name):
-        raise ValueError(
-            f"model name '{full_name}' does not match convention "
-            "'<catalog>.<schema>.<model>' (lowercase letters, digits, underscore)"
-        )
+    validate_qualified_name(full_name, kind="model name")

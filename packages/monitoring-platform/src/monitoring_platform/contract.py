@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from platform_core.registry import Registry
+
 
 @dataclass
 class MonitoringConfig:
@@ -17,23 +19,21 @@ def _config_key(domain: str, model_name: str, target_type: str) -> str:
     return f"{domain}.{model_name}.{target_type}"
 
 
-_REGISTRY: dict[str, MonitoringConfig] = {}
+_registry: Registry[MonitoringConfig] = Registry(kind="monitoring config")
 
 
 def register_monitoring_config(config: MonitoringConfig) -> None:
     key = _config_key(config.domain, config.model_name, config.target_type)
-    if key in _REGISTRY:
-        raise ValueError(f"monitoring config '{key}' already registered")
-    _REGISTRY[key] = config
+    _registry.register(key, config)
 
 
 def get_monitoring_config(domain: str, model_name: str, target_type: str) -> MonitoringConfig:
-    return _REGISTRY[_config_key(domain, model_name, target_type)]
+    return _registry.get(_config_key(domain, model_name, target_type))
 
 
 def get_registry() -> dict[str, MonitoringConfig]:
-    return dict(_REGISTRY)
+    return _registry.all()
 
 
 def clear_registry() -> None:
-    _REGISTRY.clear()
+    _registry.clear()

@@ -1,4 +1,4 @@
-import yaml
+from platform_core.resource_gen import dump_yaml
 
 from .contract import get_registry
 from .naming import derive_monitor_key
@@ -47,5 +47,11 @@ def generate_resources() -> dict:
 
 
 def write_resources(path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(generate_resources(), f, sort_keys=False)
+    dump_yaml(generate_resources(), path)
+
+
+class MonitoringResourceGenerator:
+    """Implementa platform_core.resource_gen.ResourceGenerator."""
+
+    def write(self, path: str) -> None:
+        write_resources(path)

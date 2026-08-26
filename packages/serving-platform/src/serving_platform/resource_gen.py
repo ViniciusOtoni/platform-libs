@@ -1,4 +1,4 @@
-import yaml
+from platform_core.resource_gen import dump_yaml
 
 from .contract import get_registry
 from .naming import derive_endpoint_name, validate_endpoint_name
@@ -111,5 +111,14 @@ def generate_resources(resolve_alias_version=None) -> dict:
 
 
 def write_resources(path: str, resolve_alias_version=None) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(generate_resources(resolve_alias_version), f, sort_keys=False)
+    dump_yaml(generate_resources(resolve_alias_version), path)
+
+
+class ServingResourceGenerator:
+    """Implementa platform_core.resource_gen.ResourceGenerator."""
+
+    def __init__(self, resolve_alias_version=None):
+        self.resolve_alias_version = resolve_alias_version
+
+    def write(self, path: str) -> None:
+        write_resources(path, self.resolve_alias_version)
