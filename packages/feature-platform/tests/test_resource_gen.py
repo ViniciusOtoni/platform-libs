@@ -1,7 +1,7 @@
 import pytest
 
 from feature_platform.contract import clear_registry, feature_table
-from feature_platform.resource_gen import generate_job_resource
+from feature_platform.resource_gen import FeatureResourceGenerator, generate_job_resource
 
 
 @pytest.fixture(autouse=True)
@@ -75,3 +75,16 @@ def test_generate_job_resource_points_notebook_task_to_relative_path():
 
     assert task["notebook_task"]["notebook_path"] == "../notebooks/run_feature_table.py"
     assert task["notebook_task"]["base_parameters"]["feature_table"] == "feature_a"
+
+
+def test_feature_resource_generator_writes_the_same_resource_to_disk(tmp_path):
+    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.a"])
+    def feature_a(sources, window):
+        return None
+
+    out = tmp_path / "generated_feature_pipeline.job.yml"
+    FeatureResourceGenerator(job_name="feature_pipeline").write(str(out))
+
+    content = out.read_text(encoding="utf-8")
+    assert "feature_pipeline" in content
+    assert "feature_a" in content
