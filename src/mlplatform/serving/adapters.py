@@ -1,0 +1,74 @@
+"""Implementações reais dos ports de serving.
+
+Imports de infraestrutura ficam dentro dos métodos — ver a nota em
+`core/adapters.py` sobre o container do endpoint de serving.
+"""
+
+from typing import Any
+
+import pandas as pd
+
+
+class FeatureEngineeringScorer:
+    """Pontuação via Feature Engineering em Unity Catalog.
+
+    `fe.score_batch` resolve os FeatureLookup do modelo automaticamente: a spine
+    carrega só as chaves de entidade e o timestamp, e as features vêm da feature
+    table (ou da Online Feature Store, no caso online).
+    """
+
+    def __init__(self, spark):
+        self._spark = spark
+
+    def read_table(self, table_name: str) -> Any:
+        return self._spark.table(table_name)
+
+    def count(self, df: Any) -> int:
+        return df.count()
+
+    def to_pandas(self, df: Any) -> pd.DataFrame:
+        return df.toPandas()
+
+    def score(self, model_uri: str, spine: Any) -> Any:
+        import pyspark.sql.functions as F
+        from databricks.feature_engineering import FeatureEngineeringClient
+
+        return FeatureEngineeringClient().score_batch(
+            model_uri=model_uri, df=spine, result_type="double"
+        ).withColumn("scored_at", F.current_timestamp())
+
+
+class DeltaPredictionWriter:
+    def __init__(self, spark):
+        self._spark = spark
+
+    def append(self, df: Any, table_name: str) -> None:
+        # saveAsTable não cria o schema em Unity Catalog.
+        schema = table_name.rsplit(".", 1)[0]
+        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        df.write.format("delta").mode("append").saveAsTable(table_name)
+
+
+class SdkModelRegistry:
+    def version_for_alias(self, full_model_name: str, alias: str) -> int:
+        from databricks.sdk import WorkspaceClient
+
+        return WorkspaceClient().model_versions.get_by_alias(full_model_name, alias).version
+
+
+class SdkEndpointGateway:
+    def update_to_alias(self, endpoint_name: str, model_name: str, full_model_name: str, alias: str) -> None:
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.service.serving import ServedEntityInput
+
+        WorkspaceClient().serving_endpoints.update_config_and_wait(
+            name=endpoint_name,
+            served_entities=[
+                ServedEntityInput(
+                    name=model_name,
+                    entity_name=f"{full_model_name}@{alias}",
+                    scale_to_zero_enabled=True,
+                    workload_size="Small",
+                )
+            ],
+        )

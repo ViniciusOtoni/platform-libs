@@ -1,10 +1,7 @@
 import pytest
 
-from mlplatform.serving.naming import (
-    derive_endpoint_name,
-    derive_predictions_table_name,
-    validate_endpoint_name,
-)
+from mlplatform.core.naming import derive_predictions_table_name
+from mlplatform.serving.naming import derive_endpoint_name, validate_endpoint_name
 
 
 def test_derive_predictions_table_name_follows_convention():

@@ -101,3 +101,48 @@ class FixedClock:
 
     def now(self) -> datetime:
         return self._instant
+
+
+class FakeBatchScorer:
+    """Devolve predições pré-definidas em vez de chamar fe.score_batch."""
+
+    def __init__(self, tables: dict[str, pd.DataFrame] | None = None, predictions: pd.DataFrame | None = None):
+        self._tables = tables or {}
+        self._predictions = predictions if predictions is not None else pd.DataFrame()
+        self.scored: list[tuple[str, Any]] = []
+
+    def read_table(self, table_name: str) -> Any:
+        return self._tables.get(table_name, pd.DataFrame())
+
+    def count(self, df: Any) -> int:
+        return len(df)
+
+    def to_pandas(self, df: Any) -> pd.DataFrame:
+        return df
+
+    def score(self, model_uri: str, spine: Any) -> Any:
+        self.scored.append((model_uri, spine))
+        return self._predictions
+
+
+class FakePredictionWriter:
+    def __init__(self) -> None:
+        self.appends: list[tuple[Any, str]] = []
+
+    def append(self, df: Any, table_name: str) -> None:
+        self.appends.append((df, table_name))
+
+
+class FakeEndpointGateway:
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+
+    def update_to_alias(self, endpoint_name: str, model_name: str, full_model_name: str, alias: str) -> None:
+        self.updates.append(
+            {
+                "endpoint_name": endpoint_name,
+                "model_name": model_name,
+                "full_model_name": full_model_name,
+                "alias": alias,
+            }
+        )
