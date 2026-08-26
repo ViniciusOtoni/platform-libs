@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlplatform"
-version = "3.3.0"
+version = "3.3.1"
 description = "Framework do ecossistema de MLOps no Databricks: features, training, serving e monitoring."
 requires-python = ">=3.11"
 # pyspark e delta-spark NÃO entram aqui: o runtime do Databricks já os fornece,
@@ -21,7 +21,12 @@ dependencies = [
     "pyyaml>=6.0",
     "scikit-learn>=1.4",
     "mlflow>=3.15.0",
-    "databricks-sdk>=0.30",
+    # >=0.55, e não >=0.30: databricks.sdk.service.database (synced tables do
+    # Lakebase) só existe a partir dessa versão. O serverless já traz um SDK
+    # antigo que satisfazia >=0.30, então o pip não atualizava nada e o import
+    # continuava falhando — a restrição precisa ser maior que a versão embutida
+    # para forçar o upgrade.
+    "databricks-sdk>=0.55",
 ]
 
 [project.scripts]
