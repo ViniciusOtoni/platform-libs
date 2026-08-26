@@ -121,3 +121,74 @@ def generate_resources(argv: list[str] | None = None) -> int:
     write_job_resource(args.out, job_name=args.job_name, domain_entry_point=args.domain)
     print(f"[mlplatform] recursos de '{args.component}' escritos em {args.out}", flush=True)
     return 0
+
+
+def _domain_of(component: str) -> str:
+    """O campo `domain` das configs registradas.
+
+    Derivado, e não declarado no YAML: já está nas specs, e duas fontes para o
+    mesmo fato acabam discordando.
+    """
+    if component == "features":
+        from .features.contract import get_registry
+    else:  # pragma: no cover - só features está migrado
+        raise ValueError(f"componente não suportado: {component}")
+
+    registry = get_registry()
+    if not registry:
+        raise ValueError(
+            "nenhuma config registrada — o wheel do domínio está instalado e "
+            "declara o entry point em 'mlplatform.domains'?"
+        )
+    domains = {spec.domain for spec in registry.values()}
+    if len(domains) > 1:
+        raise ValueError(f"um bundle serve um domínio só, mas foram registrados: {sorted(domains)}")
+    return domains.pop()
+
+
+def generate_bundle(argv: list[str] | None = None) -> int:
+    """Materializa o bundle DAB inteiro a partir do `conf/variables.yml`.
+
+    O repositório de domínio não versiona `databricks.yml` nem `resources/`:
+    ambos são escritos aqui, em tempo de CI, e são gitignorados.
+    """
+    from pathlib import Path
+
+    from .core.bundle import generate_bundle as build_bundle
+    from .core.resource_gen import dump_yaml
+    from .core.settings import DEFAULT_PATH, BundleSettings
+    from .features.resource_gen import write_job_resource
+
+    parser = argparse.ArgumentParser(prog="mlp-generate-bundle")
+    parser.add_argument("--component", required=True, choices=["features"])
+    parser.add_argument("--config", default=DEFAULT_PATH)
+    parser.add_argument("--root", default=".", help="raiz do bundle onde escrever")
+    args = parser.parse_args(argv)
+
+    settings = BundleSettings.load(args.config)
+    load_domains(only=settings.domain_package)
+
+    domain = _domain_of(args.component)
+    root = Path(args.root)
+    (root / "resources").mkdir(parents=True, exist_ok=True)
+
+    # O nome do artifact tem que bater com o pacote Python do domínio para a CLI
+    # saber o que buildar; o entry point declarado é justamente esse nome.
+    wheel_name = settings.domain_package or f"{domain}_{args.component}"
+
+    dump_yaml(
+        build_bundle(settings, domain=domain, component=args.component, wheel_name=wheel_name),
+        str(root / "databricks.yml"),
+    )
+    write_job_resource(
+        str(root / "resources" / f"generated_{args.component}.job.yml"),
+        job_name=settings.job_name or "feature_pipeline",
+        domain_entry_point=settings.domain_package,
+    )
+
+    print(
+        f"[mlplatform] bundle '{domain}-{args.component}' gerado em {root} "
+        f"(catalog={settings.catalog}, domain_package={settings.domain_package})",
+        flush=True,
+    )
+    return 0
