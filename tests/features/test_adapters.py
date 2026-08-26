@@ -1,4 +1,4 @@
-from mlplatform.features.online_sync import build_synced_table_spec
+from mlplatform.features.adapters import build_synced_table_spec
 
 
 def test_build_synced_table_spec_uses_table_name_as_source():

@@ -1,8 +1,10 @@
 from mlplatform.core.resource_gen import dump_yaml, with_environment
+from mlplatform.core.wheels import default_dependencies
 
 from .contract import get_registry
 
-NOTEBOOK_PATH = "../notebooks/run_feature_table.py"
+ENTRY_POINT = "mlp-run-feature-table"
+PACKAGE_NAME = "mlplatform"
 
 _JOB_PARAMETERS = [
     {"name": "mode", "default": "incremental"},
@@ -15,37 +17,59 @@ _JOB_PARAMETERS = [
 ]
 
 
+def _task(name: str, domain_entry_point: str | None) -> dict:
+    """Uma task por feature table, apontando para o console script do framework.
+
+    Era `notebook_task` apontando para um arquivo no repositório do domínio.
+    Virou `python_wheel_task`: o domínio não precisa mais carregar notebook
+    nenhum, e o entry point vem do wheel do próprio framework. Confirmado ao
+    vivo que serverless suporta python_wheel_task com environment_key.
+
+    `domain_entry_point` é o nome declarado no grupo `mlplatform.domains` do
+    pyproject do domínio — NÃO o campo `domain` da spec. São coisas diferentes:
+    `load_domains(only=...)` casa contra o nome do entry point. Emitir o campo da
+    spec aqui gerava um YAML que só falhava em runtime, dentro do job, com
+    DomainLoadError.
+    """
+    named: dict[str, str] = {}
+    if domain_entry_point:
+        named["domain"] = domain_entry_point
+    named.update(
+        {
+            "feature-table": name,
+            "mode": "{{job.parameters.mode}}",
+            "start-date": "{{job.parameters.start_date}}",
+            "end-date": "{{job.parameters.end_date}}",
+            "catalog": "{{job.parameters.catalog}}",
+            "git-commit": "{{job.parameters.git_commit}}",
+            "git-branch": "{{job.parameters.git_branch}}",
+            "database-instance-name": "{{job.parameters.database_instance_name}}",
+        }
+    )
+    return {
+        "task_key": name,
+        "python_wheel_task": {
+            "package_name": PACKAGE_NAME,
+            "entry_point": ENTRY_POINT,
+            "named_parameters": named,
+        },
+    }
 
 
 def generate_job_resource(
     job_name: str = "feature_pipeline",
     environment_dependencies: list[str] | None = None,
+    domain_entry_point: str | None = None,
 ) -> dict:
-    """environment_dependencies: se dado, declara um Environment nativo do
-    serverless (client "3") com essas dependências (ex.: URL do wheel do
-    domínio + URL do wheel de feature-platform publicado como asset de
-    Release) e referencia esse environment em cada task — substitui
-    `%pip install`/sys.path hack dentro do notebook por resolução declarativa
-    do próprio job, sem cluster/venv manual."""
-    registry = get_registry()
+    """environment_dependencies: quando omitido, deriva o par padrão — wheel do
+    domínio buildado pelo `artifacts:` do bundle + wheel do framework publicado
+    como asset do Release, na versão que está instalada aqui.
+
+    domain_entry_point: nome declarado no grupo `mlplatform.domains`, propagado
+    para as tasks. Sem ele, o job carrega todos os domínios instalados."""
     tasks = []
-    for name, spec in registry.items():
-        task = {
-            "task_key": name,
-            "notebook_task": {
-                "notebook_path": NOTEBOOK_PATH,
-                "base_parameters": {
-                    "feature_table": name,
-                    "mode": "{{job.parameters.mode}}",
-                    "start_date": "{{job.parameters.start_date}}",
-                    "end_date": "{{job.parameters.end_date}}",
-                    "catalog": "{{job.parameters.catalog}}",
-                    "git_commit": "{{job.parameters.git_commit}}",
-                    "git_branch": "{{job.parameters.git_branch}}",
-                    "database_instance_name": "{{job.parameters.database_instance_name}}",
-                },
-            },
-        }
+    for name, spec in get_registry().items():
+        task = _task(name, domain_entry_point)
         if spec.depends_on:
             task["depends_on"] = [{"task_key": dep} for dep in spec.depends_on]
         tasks.append(task)
@@ -55,23 +79,31 @@ def generate_job_resource(
         "parameters": _JOB_PARAMETERS,
         "tasks": tasks,
     }
-    return {"resources": {"jobs": {job_name: with_environment(job, environment_dependencies)}}}
+    deps = environment_dependencies if environment_dependencies is not None else default_dependencies()
+    return {"resources": {"jobs": {job_name: with_environment(job, deps)}}}
 
 
 def write_job_resource(
     path: str,
     job_name: str = "feature_pipeline",
     environment_dependencies: list[str] | None = None,
+    domain_entry_point: str | None = None,
 ) -> None:
-    dump_yaml(generate_job_resource(job_name, environment_dependencies), path)
+    dump_yaml(generate_job_resource(job_name, environment_dependencies, domain_entry_point), path)
 
 
 class FeatureResourceGenerator:
     """Implementa mlplatform.core.resource_gen.ResourceGenerator."""
 
-    def __init__(self, job_name: str = "feature_pipeline", environment_dependencies: list[str] | None = None):
+    def __init__(
+        self,
+        job_name: str = "feature_pipeline",
+        environment_dependencies: list[str] | None = None,
+        domain_entry_point: str | None = None,
+    ):
         self.job_name = job_name
         self.environment_dependencies = environment_dependencies
+        self.domain_entry_point = domain_entry_point
 
     def write(self, path: str) -> None:
-        write_job_resource(path, self.job_name, self.environment_dependencies)
+        write_job_resource(path, self.job_name, self.environment_dependencies, self.domain_entry_point)
