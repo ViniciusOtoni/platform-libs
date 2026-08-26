@@ -134,7 +134,9 @@ def _domain_of(component: str) -> str:
     """
     if component == "features":
         from .features.contract import get_registry
-    else:  # pragma: no cover - só features está migrado
+    elif component == "serving":
+        from .serving.contract import get_registry
+    else:  # pragma: no cover
         raise ValueError(f"componente não suportado: {component}")
 
     registry = get_registry()
@@ -165,7 +167,7 @@ def generate_bundle(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mlp-generate-bundle")
     parser.add_argument(
         "--component",
-        choices=["features"],
+        choices=["features", "serving"],
         help="sobrescreve o componente declarado em conf/variables.yml",
     )
     parser.add_argument("--config", default=DEFAULT_PATH)
@@ -193,15 +195,87 @@ def generate_bundle(argv: list[str] | None = None) -> int:
         build_bundle(settings, domain=domain, component=args.component, wheel_name=wheel_name),
         str(root / "databricks.yml"),
     )
-    write_job_resource(
-        str(root / "resources" / f"generated_{args.component}.job.yml"),
-        job_name=settings.job_name or "feature_pipeline",
-        domain_entry_point=settings.domain_package,
-    )
+    out = str(root / "resources" / f"generated_{component}.job.yml")
+    if component == "features":
+        write_job_resource(
+            out,
+            job_name=settings.job_name or "feature_pipeline",
+            domain_entry_point=settings.domain_package,
+        )
+    else:
+        from .serving.adapters import SdkModelRegistry
+        from .serving.contract import online_configs
+        from .serving.resource_gen import write_resources
+
+        # O resolvedor só é construído quando há config online: montá-lo sempre
+        # exigiria credenciais de workspace até num bundle puramente batch.
+        resolver = None
+        if online_configs():
+            resolver = SdkModelRegistry().version_for_alias
+        write_resources(
+            out,
+            catalog=settings.catalog,
+            resolve_alias_version=resolver,
+            domain_entry_point=settings.domain_package,
+        )
 
     print(
         f"[mlplatform] bundle '{domain}-{args.component}' gerado em {root} "
         f"(catalog={settings.catalog}, domain_package={settings.domain_package})",
         flush=True,
     )
+    return 0
+
+
+def score_batch(argv: list[str] | None = None) -> int:
+    from .core.adapters import DeltaAuditStore
+    from .serving.adapters import DeltaPredictionWriter, FeatureEngineeringScorer
+    from .serving.contract import get_serving_config
+    from .serving.usecases import ScoreBatch
+
+    parser = argparse.ArgumentParser(prog="mlp-score-batch")
+    _common_args(parser)
+    parser.add_argument("--model_name", required=True)
+    args = parser.parse_args(argv)
+
+    _load(args)
+    config = get_serving_config(args.model_name)
+    spark = _spark()
+
+    print(
+        f"[mlplatform] score_batch model={args.model_name} domain={config.domain} "
+        f"catalog={args.catalog} spine={config.spine_inference_table}",
+        flush=True,
+    )
+
+    ScoreBatch(
+        scorer=FeatureEngineeringScorer(spark),
+        writer=DeltaPredictionWriter(spark),
+        audit=DeltaAuditStore(spark),
+        clock=SystemClock(),
+    ).execute(
+        config=config,
+        catalog=args.catalog,
+        run_id=_run_id(),
+        git_commit=args.git_commit,
+        git_branch=args.git_branch,
+    )
+    return 0
+
+
+def refresh_endpoint(argv: list[str] | None = None) -> int:
+    from .serving.adapters import SdkEndpointGateway
+    from .serving.contract import get_serving_config
+    from .serving.usecases import RefreshEndpoint
+
+    parser = argparse.ArgumentParser(prog="mlp-refresh-endpoint")
+    _common_args(parser)
+    parser.add_argument("--model_name", required=True)
+    args = parser.parse_args(argv)
+
+    _load(args)
+    config = get_serving_config(args.model_name)
+
+    name = RefreshEndpoint(gateway=SdkEndpointGateway()).execute(config=config, catalog=args.catalog)
+    print(f"[mlplatform] endpoint '{name}' reaponta para o alias '{config.alias}'", flush=True)
     return 0

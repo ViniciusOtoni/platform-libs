@@ -13,3 +13,17 @@ def validate_qualified_name(name: str, *, kind: str = "name") -> None:
             f"{kind} '{name}' does not match convention "
             "'<catalog>.<schema>.<table>' (lowercase letters, digits, underscore)"
         )
+
+
+def derive_model_name(catalog: str, domain: str, model_name: str) -> str:
+    """Nome totalmente qualificado do modelo no Unity Catalog.
+
+    A convenção de sufixo de schema (`<domain>_models`) é regra da plataforma,
+    e estava hardcodada como f-string em seis lugares — incluindo scripts do
+    repositório de domínio, que não deveriam conhecê-la. Aqui ela existe uma vez.
+    """
+    return f"{catalog}.{domain}_models.{model_name}"
+
+
+def derive_predictions_table_name(catalog: str, domain: str, model_name: str) -> str:
+    return f"{catalog}.{domain}_predictions.{model_name}"
