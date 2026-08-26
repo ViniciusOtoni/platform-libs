@@ -12,8 +12,10 @@ class ResourceGenerator(Protocol):
 
 
 def dump_yaml(resource: dict, path: str) -> None:
+    # allow_unicode: sem isso o safe_dump escapa acentos ("\xE1"), e o YAML
+    # gerado é justamente o que alguém abre para entender o que a esteira montou.
     with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(resource, f, sort_keys=False)
+        yaml.safe_dump(resource, f, sort_keys=False, allow_unicode=True)
 
 
 ENVIRONMENT_KEY = "default"

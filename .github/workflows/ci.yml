@@ -9,4 +9,7 @@ jobs:
     uses: ViniciusOtoni/mlops-platform/.github/workflows/ci-validate.yml@main
     with:
       working-directory: .
+      # Config estrita: adiciona o contrato de arquitetura interna do framework
+      # (contextos não se importam entre si, infra só em adapters).
+      ruff-config: ruff-framework.toml
     secrets: inherit
