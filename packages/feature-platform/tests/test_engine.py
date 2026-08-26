@@ -2,10 +2,10 @@ from datetime import date
 
 import pytest
 
-from feature_platform.contract import FeatureTableSpec
-from feature_platform.writer import WriteMode
-from feature_platform.window import NoCheckpointError
 from feature_platform import engine
+from feature_platform.contract import FeatureTableSpec
+from feature_platform.window import NoCheckpointError
+from feature_platform.writer import WriteMode
 
 
 def _spec(**overrides):

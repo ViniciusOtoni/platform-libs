@@ -1,6 +1,6 @@
 import pytest
 
-from feature_platform.contract import feature_table, clear_registry
+from feature_platform.contract import clear_registry, feature_table
 from feature_platform.resource_gen import generate_job_resource
 
 

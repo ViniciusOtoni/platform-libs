@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from platform_core.audit import RunRecord, to_row, AUDIT_TABLE
+from platform_core.audit import AUDIT_TABLE, RunRecord, to_row
 
 
 def test_audit_table_name():

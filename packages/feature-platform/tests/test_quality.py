@@ -4,12 +4,12 @@ import pandas as pd
 
 from feature_platform.quality import (
     Finding,
+    check_freshness,
+    check_no_nulls,
     check_schema,
     check_unique_keys,
-    check_no_nulls,
-    check_freshness,
-    run_quality_gate,
     gate_passed,
+    run_quality_gate,
 )
 
 

@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class WriteMode(str, Enum):
+class WriteMode(StrEnum):
     INCREMENTAL = "incremental"
     BACKFILL = "backfill"
 

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
+from monitoring_platform.central_table import DRIFT_METRICS_TABLE, build_drift_metric_row
 from monitoring_platform.evaluation import DriftResult
-from monitoring_platform.central_table import build_drift_metric_row, DRIFT_METRICS_TABLE
 
 
 def test_drift_metrics_table_name():

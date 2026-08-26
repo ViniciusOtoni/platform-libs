@@ -4,8 +4,8 @@ from training_platform.quality import (
     Finding,
     check_metric_is_finite,
     check_predictions_not_empty,
-    run_sanity_gate,
     gate_passed,
+    run_sanity_gate,
 )
 
 

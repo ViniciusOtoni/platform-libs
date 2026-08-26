@@ -1,4 +1,5 @@
 from datetime import date
+
 import pytest
 
 from feature_platform.types import DateRange

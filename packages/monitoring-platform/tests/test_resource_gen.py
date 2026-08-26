@@ -1,6 +1,6 @@
 import pytest
 
-from monitoring_platform.contract import MonitoringConfig, register_monitoring_config, clear_registry
+from monitoring_platform.contract import MonitoringConfig, clear_registry, register_monitoring_config
 from monitoring_platform.resource_gen import generate_resources
 
 
@@ -27,7 +27,13 @@ def _config(**overrides):
 
 def test_generates_one_job_per_config_with_its_own_schedule():
     register_monitoring_config(_config(target_type="feature_table"))
-    register_monitoring_config(_config(target_type="predictions", target_table="workspace.exemplo_predictions.propensao_exemplo", schedule_cron="0 0 8 * * ?"))
+    register_monitoring_config(
+        _config(
+            target_type="predictions",
+            target_table="workspace.exemplo_predictions.propensao_exemplo",
+            schedule_cron="0 0 8 * * ?",
+        )
+    )
 
     resources = generate_resources()
     jobs = resources["resources"]["jobs"]

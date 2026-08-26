@@ -1,6 +1,6 @@
 import pytest
 
-from feature_platform.contract import feature_table, get_registry, clear_registry
+from feature_platform.contract import clear_registry, feature_table, get_registry
 
 
 @pytest.fixture(autouse=True)
@@ -11,7 +11,9 @@ def _reset_registry():
 
 
 def test_feature_table_registers_spec_with_defaults():
-    @feature_table(domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.transactions"])
+    @feature_table(
+        domain="exemplo", entity_keys=["customer_id"], timestamp_key="feature_ts", sources=["raw.transactions"]
+    )
     def minha_feature(sources, window):
         return None
 

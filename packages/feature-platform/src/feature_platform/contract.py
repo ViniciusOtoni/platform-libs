@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 from platform_core.registry import Registry
 
@@ -14,7 +14,7 @@ class FeatureTableSpec:
     domain: str
     online: bool = False
     depends_on: list[str] = field(default_factory=list)
-    table_name: Optional[str] = None
+    table_name: str | None = None
 
 
 _registry: Registry[FeatureTableSpec] = Registry(kind="feature table")

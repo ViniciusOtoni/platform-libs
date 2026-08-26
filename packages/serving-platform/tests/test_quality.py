@@ -2,11 +2,11 @@ import pandas as pd
 
 from serving_platform.quality import (
     Finding,
-    check_no_nulls_in_predictions,
     check_no_nulls_in_joined_columns,
+    check_no_nulls_in_predictions,
     check_row_count_matches,
-    run_predictions_gate,
     gate_passed,
+    run_predictions_gate,
 )
 
 

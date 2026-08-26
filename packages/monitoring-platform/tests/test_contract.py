@@ -2,10 +2,10 @@ import pytest
 
 from monitoring_platform.contract import (
     MonitoringConfig,
-    register_monitoring_config,
+    clear_registry,
     get_monitoring_config,
     get_registry,
-    clear_registry,
+    register_monitoring_config,
 )
 
 
@@ -39,7 +39,9 @@ def test_register_and_get_monitoring_config():
 
 def test_same_model_can_have_feature_table_and_predictions_configs():
     register_monitoring_config(_config(target_type="feature_table"))
-    register_monitoring_config(_config(target_type="predictions", target_table="workspace.exemplo_predictions.propensao_exemplo"))
+    register_monitoring_config(
+        _config(target_type="predictions", target_table="workspace.exemplo_predictions.propensao_exemplo")
+    )
 
     assert len(get_registry()) == 2
 

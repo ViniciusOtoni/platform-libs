@@ -6,6 +6,7 @@ for _p in (_repo_root, _repo_root / "src"):
     sys.path.insert(0, str(_p))
 
 import examples.monitoring_configs  # noqa: F401
+
 from monitoring_platform.resource_gen import write_resources
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 import pytest
 
 from serving_platform.naming import (
-    derive_predictions_table_name,
     derive_endpoint_name,
+    derive_predictions_table_name,
     validate_endpoint_name,
 )
 

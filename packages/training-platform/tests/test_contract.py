@@ -3,10 +3,10 @@ import pytest
 from training_platform.contract import (
     FeatureLookupSpec,
     TrainingConfig,
-    register_training_config,
-    get_training_config,
-    get_registry,
     clear_registry,
+    get_registry,
+    get_training_config,
+    register_training_config,
 )
 
 

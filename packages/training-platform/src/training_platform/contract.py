@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Optional
+from typing import Literal
 
 from platform_core.registry import Registry
 
@@ -28,7 +29,7 @@ class TrainingConfig:
     metric: str | Callable
     metric_direction: Literal["maximize", "minimize"]
     custom_transforms: list = field(default_factory=list)
-    pyfunc_model_class: Optional[type] = None
+    pyfunc_model_class: type | None = None
 
     def __post_init__(self) -> None:
         total = self.train_pct + self.val_pct + self.test_pct

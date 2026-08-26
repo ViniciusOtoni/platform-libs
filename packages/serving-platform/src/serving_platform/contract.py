@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 from platform_core.registry import Registry
 
@@ -12,8 +12,8 @@ class ServingConfig:
     model_name: str
     mode: Literal["online", "batch"]
     alias: str = "champion"
-    spine_inference_table: Optional[str] = None
-    schedule_cron: Optional[str] = None
+    spine_inference_table: str | None = None
+    schedule_cron: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in _VALID_MODES:

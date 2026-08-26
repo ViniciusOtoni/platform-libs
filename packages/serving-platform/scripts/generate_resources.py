@@ -7,6 +7,7 @@ for _p in (_repo_root, _repo_root / "src"):
 
 import examples.serving_configs  # noqa: F401
 from databricks.sdk import WorkspaceClient
+
 from serving_platform.resource_gen import write_resources
 
 CATALOG = "workspace"  # deve bater com o default de `catalog` em databricks.yml

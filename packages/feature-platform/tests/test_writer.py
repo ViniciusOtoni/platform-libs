@@ -1,4 +1,3 @@
-import pytest
 
 from feature_platform.writer import WriteMode, write_strategy_for
 

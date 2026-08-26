@@ -27,7 +27,7 @@ def sync_online_table(
     existente, a chamada falha com um erro claro do próprio SDK/API, não
     silenciosamente."""
     from databricks.sdk import WorkspaceClient
-    from databricks.sdk.service.database import SyncedDatabaseTable, SyncedTableSpec, SyncedTableSchedulingPolicy
+    from databricks.sdk.service.database import SyncedDatabaseTable, SyncedTableSchedulingPolicy, SyncedTableSpec
 
     if not database_instance_name:
         raise ValueError("sync_online_table requires a non-empty database_instance_name")

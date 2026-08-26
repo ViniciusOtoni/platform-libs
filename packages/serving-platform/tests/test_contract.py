@@ -2,10 +2,10 @@ import pytest
 
 from serving_platform.contract import (
     ServingConfig,
-    register_serving_config,
-    get_serving_config,
-    get_registry,
     clear_registry,
+    get_registry,
+    get_serving_config,
+    register_serving_config,
 )
 
 

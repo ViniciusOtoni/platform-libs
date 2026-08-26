@@ -1,10 +1,11 @@
 from datetime import date
+
 import pytest
 
 from feature_platform.window import (
-    resolve_incremental_window,
-    parse_backfill_window,
     NoCheckpointError,
+    parse_backfill_window,
+    resolve_incremental_window,
 )
 
 

@@ -1,6 +1,6 @@
 import pytest
 
-from feature_platform.naming import derive_table_name, validate_table_name, resolve_table_name
+from feature_platform.naming import derive_table_name, resolve_table_name, validate_table_name
 
 
 def test_derive_table_name_follows_convention():

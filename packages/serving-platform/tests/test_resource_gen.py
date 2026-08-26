@@ -1,6 +1,6 @@
 import pytest
 
-from serving_platform.contract import ServingConfig, register_serving_config, clear_registry
+from serving_platform.contract import ServingConfig, clear_registry, register_serving_config
 from serving_platform.resource_gen import generate_resources
 
 

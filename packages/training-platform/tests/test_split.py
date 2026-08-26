@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from training_platform.split import compute_split_dates, assign_split
+from training_platform.split import assign_split, compute_split_dates
 
 
 def _dates(n):
