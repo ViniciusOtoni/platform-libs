@@ -1,10 +1,9 @@
-from mlplatform.core.resource_gen import dump_yaml
+from mlplatform.core.resource_gen import dump_yaml, with_environment
 
 from .contract import get_registry
 from .naming import derive_monitor_key
 
 NOTEBOOK_PATH = "../notebooks/evaluate_drift.py"
-_ENVIRONMENT_KEY = "default"
 
 
 def _monitoring_job(key: str, config, environment_dependencies: list[str] | None = None) -> dict:
@@ -36,15 +35,7 @@ def _monitoring_job(key: str, config, environment_dependencies: list[str] | None
             }
         ],
     }
-    if environment_dependencies:
-        job["tasks"][0]["environment_key"] = _ENVIRONMENT_KEY
-        job["environments"] = [
-            {
-                "environment_key": _ENVIRONMENT_KEY,
-                "spec": {"client": "3", "dependencies": list(environment_dependencies)},
-            }
-        ]
-    return job
+    return with_environment(job, environment_dependencies)
 
 
 def generate_resources(environment_dependencies: list[str] | None = None) -> dict:

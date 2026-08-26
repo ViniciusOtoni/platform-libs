@@ -1,30 +1,14 @@
-from mlplatform.core.resource_gen import dump_yaml
+from mlplatform.core.resource_gen import dump_yaml, with_environment
 
 from .contract import get_registry
 from .naming import derive_endpoint_name, validate_endpoint_name
 
 BATCH_NOTEBOOK_PATH = "../notebooks/score_batch.py"
 REFRESH_NOTEBOOK_PATH = "../notebooks/refresh_endpoint.py"
-_ENVIRONMENT_KEY = "default"
-
-
-def _with_environment(job: dict, environment_dependencies: list[str] | None) -> dict:
-    """Declara um Environment nativo do serverless (client "3") no job e
-    referencia-o em cada task -- só se aplica a `jobs`, não a
-    `model_serving_endpoints` (que resolve dependências via o modelo MLflow
-    registrado, não via job Environment)."""
-    if not environment_dependencies:
-        return job
-    for task in job["tasks"]:
-        task["environment_key"] = _ENVIRONMENT_KEY
-    job["environments"] = [
-        {"environment_key": _ENVIRONMENT_KEY, "spec": {"client": "3", "dependencies": list(environment_dependencies)}}
-    ]
-    return job
 
 
 def _batch_job(model_name: str, config, environment_dependencies: list[str] | None = None) -> dict:
-    return _with_environment(
+    return with_environment(
         {
             "name": f"score_batch_{model_name}",
             "schedule": {"quartz_cron_expression": config.schedule_cron, "timezone_id": "UTC"},
@@ -79,7 +63,7 @@ def _online_endpoint(model_name: str, config, entity_version: int) -> dict:
 
 
 def _refresh_endpoint_job(environment_dependencies: list[str] | None = None) -> dict:
-    return _with_environment(
+    return with_environment(
         {
             "name": "refresh_endpoint",
             "parameters": [

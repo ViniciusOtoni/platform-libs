@@ -1,4 +1,4 @@
-from mlplatform.core.resource_gen import dump_yaml
+from mlplatform.core.resource_gen import dump_yaml, with_environment
 
 from .contract import get_registry
 
@@ -15,7 +15,6 @@ _JOB_PARAMETERS = [
 ]
 
 
-_ENVIRONMENT_KEY = "default"
 
 
 def generate_job_resource(
@@ -49,8 +48,6 @@ def generate_job_resource(
         }
         if spec.depends_on:
             task["depends_on"] = [{"task_key": dep} for dep in spec.depends_on]
-        if environment_dependencies:
-            task["environment_key"] = _ENVIRONMENT_KEY
         tasks.append(task)
 
     job: dict = {
@@ -58,15 +55,7 @@ def generate_job_resource(
         "parameters": _JOB_PARAMETERS,
         "tasks": tasks,
     }
-    if environment_dependencies:
-        job["environments"] = [
-            {
-                "environment_key": _ENVIRONMENT_KEY,
-                "spec": {"client": "3", "dependencies": list(environment_dependencies)},
-            }
-        ]
-
-    return {"resources": {"jobs": {job_name: job}}}
+    return {"resources": {"jobs": {job_name: with_environment(job, environment_dependencies)}}}
 
 
 def write_job_resource(

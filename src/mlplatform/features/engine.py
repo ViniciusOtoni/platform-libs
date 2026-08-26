@@ -1,9 +1,11 @@
 from datetime import date, datetime
 
-from .audit import RunRecord, get_last_success_checkpoint, write_run
+from mlplatform.core.audit import RunRecord, get_last_success_checkpoint, write_run
+from mlplatform.core.quality import Finding, gate_passed
+
 from .contract import FeatureTableSpec
 from .naming import resolve_table_name
-from .quality import Finding, gate_passed, run_quality_gate
+from .quality import run_quality_gate
 from .types import DateRange
 from .window import parse_backfill_window, resolve_incremental_window
 from .writer import WriteMode, write_feature_table

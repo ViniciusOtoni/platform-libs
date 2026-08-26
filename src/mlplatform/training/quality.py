@@ -1,12 +1,6 @@
 import math
-from dataclasses import dataclass
 
-
-@dataclass(frozen=True)
-class Finding:
-    check: str
-    status: str  # "PASS" ou "FAIL"
-    detail: str = ""
+from mlplatform.core.quality import Finding
 
 
 def check_metric_is_finite(metric_value: float) -> Finding:
@@ -32,6 +26,3 @@ def run_sanity_gate(metric_value: float, num_predictions: int) -> list[Finding]:
         check_predictions_not_empty(num_predictions),
     ]
 
-
-def gate_passed(findings: list[Finding]) -> bool:
-    return all(f.status == "PASS" for f in findings)
