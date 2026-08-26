@@ -63,3 +63,24 @@ def test_job_parameters_carry_domain_model_and_target_type():
     param_names = {p["name"] for p in job["parameters"]}
 
     assert param_names == {"domain", "model_name", "target_type", "catalog", "git_commit", "git_branch"}
+
+
+def test_environment_dependencies_declared_when_given():
+    register_monitoring_config(_config())
+    deps = ["./dist/*.whl", "https://example.com/monitoring_platform-0.1.0.whl"]
+
+    resources = generate_resources(environment_dependencies=deps)
+    job = list(resources["resources"]["jobs"].values())[0]
+
+    assert job["environments"] == [{"environment_key": "default", "spec": {"client": "3", "dependencies": deps}}]
+    assert job["tasks"][0]["environment_key"] == "default"
+
+
+def test_without_environment_dependencies_omits_environments():
+    register_monitoring_config(_config())
+
+    resources = generate_resources()
+    job = list(resources["resources"]["jobs"].values())[0]
+
+    assert "environments" not in job
+    assert "environment_key" not in job["tasks"][0]

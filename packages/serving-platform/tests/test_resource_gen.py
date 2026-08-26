@@ -68,3 +68,31 @@ def test_generate_resources_omits_empty_resource_kinds():
 
     resources = generate_resources()
     assert "model_serving_endpoints" not in resources["resources"]
+
+
+def test_environment_dependencies_declared_on_every_job_not_on_endpoints():
+    register_serving_config(
+        ServingConfig(
+            domain="exemplo",
+            model_name="modelo_batch",
+            mode="batch",
+            spine_inference_table="workspace.exemplo.spine_inference",
+            schedule_cron="0 0 6 * * ?",
+        )
+    )
+    register_serving_config(ServingConfig(domain="exemplo", model_name="modelo_online", mode="online"))
+
+    deps = ["./dist/*.whl", "https://example.com/serving_platform-0.1.0.whl"]
+    resources = generate_resources(resolve_alias_version=lambda model_name, config: 3, environment_dependencies=deps)
+    jobs = resources["resources"]["jobs"]
+
+    for job in jobs.values():
+        assert job["environments"] == [{"environment_key": "default", "spec": {"client": "3", "dependencies": deps}}]
+        assert all(t["environment_key"] == "default" for t in job["tasks"])
+    assert "environments" not in resources["resources"]["model_serving_endpoints"]["exemplo-modelo_online-serving"]
+
+
+def test_without_environment_dependencies_omits_environments():
+    resources = generate_resources()
+    assert "environments" not in resources["resources"]["jobs"]["refresh_endpoint"]
+    assert "environment_key" not in resources["resources"]["jobs"]["refresh_endpoint"]["tasks"][0]
