@@ -24,6 +24,10 @@ class BundleSettings:
     """Configuração declarada pelo domínio para um bundle."""
 
     catalog: str = "workspace"
+    # Qual componente do framework este bundle é. Não é derivável de dentro de um
+    # workflow reutilizável genérico — ele roda o mesmo comando para todos os
+    # bundles, e é o próprio bundle que sabe o que é.
+    component: str | None = None
     # Nome do entry point declarado no grupo `mlplatform.domains` do pyproject do
     # domínio. Não é derivável: só se descobre carregando, e carregar exige saber
     # qual. É a única identidade que o arquivo precisa carregar.

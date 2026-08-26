@@ -160,15 +160,25 @@ def generate_bundle(argv: list[str] | None = None) -> int:
     from .features.resource_gen import write_job_resource
 
     parser = argparse.ArgumentParser(prog="mlp-generate-bundle")
-    parser.add_argument("--component", required=True, choices=["features"])
+    parser.add_argument(
+        "--component",
+        choices=["features"],
+        help="sobrescreve o componente declarado em conf/variables.yml",
+    )
     parser.add_argument("--config", default=DEFAULT_PATH)
     parser.add_argument("--root", default=".", help="raiz do bundle onde escrever")
     args = parser.parse_args(argv)
 
     settings = BundleSettings.load(args.config)
+    # A esteira é genérica: roda o mesmo comando para todo bundle, então quem
+    # sabe o que este bundle é, é o próprio arquivo do domínio.
+    component = args.component or settings.component
+    if not component:
+        raise ValueError(f"declare 'component' em {args.config} (ou passe --component)")
+    args.component = component
     load_domains(only=settings.domain_package)
 
-    domain = _domain_of(args.component)
+    domain = _domain_of(component)
     root = Path(args.root)
     (root / "resources").mkdir(parents=True, exist_ok=True)
 
