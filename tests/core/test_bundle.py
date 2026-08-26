@@ -7,8 +7,16 @@ def _bundle(**overrides):
     return generate_bundle(settings, domain="exemplo", component="features", wheel_name="exemplo_features")
 
 
-def test_bundle_name_joins_domain_and_component():
+def test_bundle_name_falls_back_to_domain_and_component():
     assert bundle_name("exemplo", "features") == "exemplo-features"
+
+
+def test_bundle_name_prefers_the_domain_package_because_it_is_unique():
+    """domínio+componente não é único: serving tem batch e online, e os dois
+    virariam "exemplo-serving" — colidindo no mesmo caminho do workspace, um
+    sobrescrevendo o outro no deploy."""
+    assert bundle_name("exemplo", "serving", "exemplo_serving_batch") == "exemplo-serving-batch"
+    assert bundle_name("exemplo", "serving", "exemplo_serving_online") == "exemplo-serving-online"
 
 
 def test_includes_the_generated_resources_directory():
