@@ -193,7 +193,11 @@ def generate_bundle(argv: list[str] | None = None) -> int:
 
     bundle = build_bundle(settings, domain=domain, component=component, wheel_name=wheel_name)
     dump_yaml(bundle, str(root / "databricks.yml"))
-    out = str(root / "resources" / f"generated_{component}.job.yml")
+    # `.yml`, não `.job.yml`: por convenção do DABs um arquivo .job.yml declara UM
+    # job, e o gerado pode conter vários — e, no serving, também
+    # model_serving_endpoints. Com o sufixo errado o `bundle validate` emite uma
+    # recomendação em toda execução, e aviso permanente ensina a ignorar a saída.
+    out = str(root / "resources" / f"generated_{component}.yml")
     if component == "features":
         write_job_resource(
             out,
