@@ -146,3 +146,72 @@ class FakeEndpointGateway:
                 "alias": alias,
             }
         )
+
+
+class FakeTaskChannel:
+    """taskValues em memória. Aceita opcionalmente valores já postos por uma
+    "task anterior", para testar um passo isolado do que veio antes dele."""
+
+    def __init__(self, initial: dict[tuple[str, str], str] | None = None):
+        self.values: dict[str, str] = {}
+        self._initial = initial or {}
+
+    def set(self, key: str, value: str) -> None:
+        self.values[key] = value
+
+    def get(self, task_key: str, key: str) -> str:
+        if (task_key, key) in self._initial:
+            return self._initial[(task_key, key)]
+        if key in self.values:
+            return self.values[key]
+        raise KeyError(f"nenhum taskValue '{key}' vindo de '{task_key}'")
+
+
+class FakeScratchStore:
+    def __init__(self, tables: dict[str, pd.DataFrame] | None = None):
+        self.tables = dict(tables or {})
+
+    def write(self, df: pd.DataFrame, table_name: str) -> None:
+        self.tables[table_name] = df
+
+    def read(self, table_name: str) -> pd.DataFrame:
+        return self.tables[table_name]
+
+
+class FakeExperimentTracker:
+    def __init__(self, run_id: str = "run-mlflow-1"):
+        self._run_id = run_id
+        self.params: list[tuple[str, dict, str]] = []
+        self.metrics: list[tuple[str, str, float]] = []
+
+    def start_run(self, experiment: str) -> str:
+        return self._run_id
+
+    def log_params(self, run_id: str, params: dict, prefix: str = "") -> None:
+        self.params.append((run_id, params, prefix))
+
+    def log_metric(self, run_id: str, name: str, value: float) -> None:
+        self.metrics.append((run_id, name, value))
+
+
+class FakeTrainingSetBuilder:
+    def __init__(self, frame: pd.DataFrame | None = None):
+        self._frame = frame if frame is not None else pd.DataFrame()
+        self.builds = 0
+
+    def build(self, spine_table: str, config: Any) -> Any:
+        self.builds += 1
+        return self._frame
+
+    def to_pandas(self, training_set: Any) -> pd.DataFrame:
+        return training_set
+
+
+class FakeModelPublisher:
+    def __init__(self) -> None:
+        self.published: list[dict] = []
+
+    def publish(self, model, training_set, full_model_name, run_id, git_commit, git_branch) -> None:
+        self.published.append(
+            {"model": model, "full_model_name": full_model_name, "run_id": run_id, "git_commit": git_commit}
+        )

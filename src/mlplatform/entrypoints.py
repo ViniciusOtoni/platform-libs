@@ -136,6 +136,8 @@ def _domain_of(component: str) -> str:
         from .features.contract import get_registry
     elif component == "serving":
         from .serving.contract import get_registry
+    elif component == "training":
+        from .training.contract import get_registry
     else:  # pragma: no cover
         raise ValueError(f"componente não suportado: {component}")
 
@@ -167,7 +169,7 @@ def generate_bundle(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mlp-generate-bundle")
     parser.add_argument(
         "--component",
-        choices=["features", "serving"],
+        choices=["features", "serving", "training"],
         help="sobrescreve o componente declarado em conf/variables.yml",
     )
     parser.add_argument("--config", default=DEFAULT_PATH)
@@ -202,6 +204,14 @@ def generate_bundle(argv: list[str] | None = None) -> int:
         write_job_resource(
             out,
             job_name=settings.job_name or "feature_pipeline",
+            domain_entry_point=settings.domain_package,
+        )
+    elif component == "training":
+        from .training.resource_gen import write_job_resource as write_training
+
+        write_training(
+            out,
+            job_name=settings.job_name or "training_pipeline",
             domain_entry_point=settings.domain_package,
         )
     else:
@@ -284,4 +294,99 @@ def refresh_endpoint(argv: list[str] | None = None) -> int:
 
     name = RefreshEndpoint(gateway=SdkEndpointGateway()).execute(config=config, catalog=args.catalog)
     print(f"[mlplatform] endpoint '{name}' reaponta para o alias '{config.alias}'", flush=True)
+    return 0
+
+
+def _training_scorer(config):
+    """O scorer sai da config: uma string vira scorer do sklearn, um callable é
+    usado como veio."""
+    from sklearn.metrics import get_scorer
+
+    return get_scorer(config.metric) if isinstance(config.metric, str) else config.metric
+
+
+def _training_context(args):
+    from .training.adapters import (
+        DbutilsTaskChannel,
+        DeltaScratchStore,
+        FeatureEngineeringTrainingSet,
+        MlflowTracker,
+    )
+    from .training.contract import get_training_config
+
+    config = get_training_config(args.model_name)
+    spark = _spark()
+    print(
+        f"[mlplatform] training model={config.model_name} domain={config.domain} "
+        f"catalog={args.catalog} metric={config.metric}",
+        flush=True,
+    )
+    return config, spark, {
+        "builder": FeatureEngineeringTrainingSet(spark),
+        "scratch": DeltaScratchStore(spark),
+        "tracker": MlflowTracker(),
+        "channel": DbutilsTaskChannel(),
+    }
+
+
+def _training_parser(prog: str) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog)
+    _common_args(parser)
+    parser.add_argument("--model_name", required=True)
+    return parser
+
+
+def prepare_training_set(argv: list[str] | None = None) -> int:
+    from .training.usecases import PrepareTrainingSet
+
+    args = _training_parser("mlp-prepare-training-set").parse_args(argv)
+    _load(args)
+    config, _spark_session, deps = _training_context(args)
+
+    PrepareTrainingSet(
+        builder=deps["builder"], scratch=deps["scratch"], tracker=deps["tracker"], channel=deps["channel"]
+    ).execute(config=config, catalog=args.catalog)
+    return 0
+
+
+def fit_and_compare(argv: list[str] | None = None) -> int:
+    from .training.usecases import FitAndCompare
+
+    args = _training_parser("mlp-fit-and-compare").parse_args(argv)
+    _load(args)
+    config, _spark_session, deps = _training_context(args)
+
+    results = FitAndCompare(
+        scratch=deps["scratch"], tracker=deps["tracker"], channel=deps["channel"]
+    ).execute(config=config, catalog=args.catalog, scorer=_training_scorer(config))
+    print(f"[mlplatform] {len(results)} combinações avaliadas", flush=True)
+    return 0
+
+
+def select_test_register(argv: list[str] | None = None) -> int:
+    from .core.adapters import DeltaAuditStore
+    from .training.adapters import FeatureEngineeringPublisher
+    from .training.usecases import SelectTestAndRegister
+
+    args = _training_parser("mlp-select-test-register").parse_args(argv)
+    _load(args)
+    config, spark, deps = _training_context(args)
+
+    name = SelectTestAndRegister(
+        scratch=deps["scratch"],
+        tracker=deps["tracker"],
+        publisher=FeatureEngineeringPublisher(spark),
+        builder=deps["builder"],
+        audit=DeltaAuditStore(spark),
+        clock=SystemClock(),
+        channel=deps["channel"],
+    ).execute(
+        config=config,
+        catalog=args.catalog,
+        scorer=_training_scorer(config),
+        run_id=_run_id(),
+        git_commit=args.git_commit,
+        git_branch=args.git_branch,
+    )
+    print(f"[mlplatform] modelo registrado: {name}", flush=True)
     return 0
