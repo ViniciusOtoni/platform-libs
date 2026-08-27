@@ -26,9 +26,19 @@ class ScratchStore(Protocol):
 
 
 class ExperimentTracker(Protocol):
-    """Registro de métricas e parâmetros do experimento."""
+    """Registro de métricas e parâmetros do experimento.
+
+    Um experiment por modelo, um run pai por execução do pipeline e um run
+    filho aninhado por combinação de hiperparâmetros. O aninhamento não é
+    estético: parâmetros do MLflow são imutáveis, então registrar duas
+    combinações no mesmo run levanta `Changing param values is not allowed` na
+    segunda. Os métodos recebem o run por id — quem chama nunca depende de um
+    run "corrente" implícito.
+    """
 
     def start_run(self, experiment: str) -> str: ...
+
+    def start_child_run(self, parent_run_id: str, name: str) -> str: ...
 
     def log_params(self, run_id: str, params: dict, prefix: str = "") -> None: ...
 

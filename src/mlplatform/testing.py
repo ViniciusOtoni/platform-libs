@@ -178,16 +178,43 @@ class FakeScratchStore:
         return self.tables[table_name]
 
 
+class ImmutableParamError(Exception):
+    """Registrar o mesmo parâmetro com outro valor no mesmo run.
+
+    O MLflow real levanta `MlflowException: Changing param values is not
+    allowed`. O fake reproduz isso porque foi exatamente essa regra que um
+    refactor violou — todas as combinações de hiperparâmetros iam para o run
+    pai, e o pipeline morria na segunda. Um fake permissivo teria deixado
+    passar.
+    """
+
+
 class FakeExperimentTracker:
     def __init__(self, run_id: str = "run-mlflow-1"):
         self._run_id = run_id
+        self._children = 0
+        self._logged: dict[tuple[str, str], Any] = {}
         self.params: list[tuple[str, dict, str]] = []
         self.metrics: list[tuple[str, str, float]] = []
+        self.child_runs: list[tuple[str, str, str]] = []
 
     def start_run(self, experiment: str) -> str:
         return self._run_id
 
+    def start_child_run(self, parent_run_id: str, name: str) -> str:
+        self._children += 1
+        child_run_id = f"{parent_run_id}-child-{self._children}"
+        self.child_runs.append((parent_run_id, name, child_run_id))
+        return child_run_id
+
     def log_params(self, run_id: str, params: dict, prefix: str = "") -> None:
+        for key, value in ((f"{prefix}{k}", v) for k, v in params.items()):
+            previous = self._logged.get((run_id, key), value)
+            if previous != value:
+                raise ImmutableParamError(
+                    f"parâmetro '{key}' já vale {previous!r} no run {run_id}"
+                )
+            self._logged[(run_id, key)] = value
         self.params.append((run_id, params, prefix))
 
     def log_metric(self, run_id: str, name: str, value: float) -> None:

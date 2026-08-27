@@ -27,6 +27,10 @@ RESULTS_KEY = "hyperparameter_results"
 PREPARE_TASK = "prepare_training_set"
 FIT_TASK = "fit_and_compare"
 
+# Nome dos runs filhos no MLflow. `combo_0`, `combo_1`, ... na ordem em que o
+# domínio declarou as combinações, para casar o run com a linha da config.
+COMBO_RUN_PREFIX = "combo_"
+
 
 class SanityGateFailure(Exception):
     def __init__(self, findings: list[Finding]):
@@ -74,7 +78,14 @@ class PrepareTrainingSet:
 
 
 class FitAndCompare:
-    """Fita cada combinação de hiperparâmetros e mede na validação."""
+    """Fita cada combinação de hiperparâmetros e mede na validação.
+
+    Cada combinação vira um run filho aninhado no run pai criado por
+    `PrepareTrainingSet` — não um experiment por combinação. É o que permite
+    comparar as combinações lado a lado na UI do MLflow, e é obrigatório: os
+    parâmetros de um run são imutáveis, então logar `n_estimators=100` e
+    depois `n_estimators=200` no mesmo run quebra na segunda combinação.
+    """
 
     def __init__(self, scratch: ScratchStore, tracker: ExperimentTracker, channel: TaskChannel):
         self._scratch = scratch
@@ -90,7 +101,7 @@ class FitAndCompare:
         metric_name = config.metric if isinstance(config.metric, str) else "custom_metric"
 
         results: list[tuple[dict, float]] = []
-        for hyperparams in config.hyperparameter_sets:
+        for index, hyperparams in enumerate(config.hyperparameter_sets):
             pipeline = build_pipeline(config.custom_transforms, config.algorithm(**hyperparams))
             pipeline.fit(train[cols], train[config.label_column])
             value = (
@@ -98,8 +109,9 @@ class FitAndCompare:
                 if len(val) > 0
                 else float("nan")
             )
-            self._tracker.log_params(run_id, hyperparams)
-            self._tracker.log_metric(run_id, metric_name, value)
+            child_run_id = self._tracker.start_child_run(run_id, f"{COMBO_RUN_PREFIX}{index}")
+            self._tracker.log_params(child_run_id, hyperparams)
+            self._tracker.log_metric(child_run_id, metric_name, value)
             results.append((hyperparams, value))
 
         self._channel.set(RESULTS_KEY, json.dumps(results))
