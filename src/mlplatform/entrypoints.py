@@ -191,10 +191,8 @@ def generate_bundle(argv: list[str] | None = None) -> int:
     # saber o que buildar; o entry point declarado é justamente esse nome.
     wheel_name = settings.domain_package or f"{domain}_{args.component}"
 
-    dump_yaml(
-        build_bundle(settings, domain=domain, component=args.component, wheel_name=wheel_name),
-        str(root / "databricks.yml"),
-    )
+    bundle = build_bundle(settings, domain=domain, component=component, wheel_name=wheel_name)
+    dump_yaml(bundle, str(root / "databricks.yml"))
     out = str(root / "resources" / f"generated_{component}.job.yml")
     if component == "features":
         write_job_resource(
@@ -219,9 +217,13 @@ def generate_bundle(argv: list[str] | None = None) -> int:
             domain_entry_point=settings.domain_package,
         )
 
+    # O nome real do bundle, não uma string remontada: com os notebooks removidos,
+    # este log é a principal superfície de debug, e um nome que não corresponde ao
+    # que foi gerado manda quem está investigando para o lugar errado.
     print(
-        f"[mlplatform] bundle '{domain}-{args.component}' gerado em {root} "
-        f"(catalog={settings.catalog}, domain_package={settings.domain_package})",
+        f"[mlplatform] bundle '{bundle['bundle']['name']}' gerado em {root} "
+        f"(component={component}, catalog={settings.catalog}, "
+        f"domain_package={settings.domain_package})",
         flush=True,
     )
     return 0
