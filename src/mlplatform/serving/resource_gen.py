@@ -85,7 +85,14 @@ def generate_resources(
     que é por que os dois nunca foram polimórficos de verdade.
     """
     deps = environment_dependencies if environment_dependencies is not None else default_dependencies()
-    jobs = {"refresh_endpoint": with_environment(_refresh_job(domain_entry_point), deps)}
+    jobs: dict = {}
+
+    # refresh_endpoint só faz sentido onde existe endpoint. Emiti-lo sempre —
+    # como o código original fazia — deployava um job inútil no bundle de batch,
+    # e com dois bundles de serving no mesmo domínio isso vira dois jobs de mesmo
+    # nome no workspace, indistinguíveis na UI.
+    if online_configs():
+        jobs["refresh_endpoint"] = with_environment(_refresh_job(domain_entry_point), deps)
 
     for name, config in batch_configs().items():
         jobs[f"score_batch_{name}"] = with_environment(_batch_job(config, domain_entry_point), deps)

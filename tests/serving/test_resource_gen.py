@@ -72,8 +72,16 @@ def test_online_without_a_resolver_fails_with_the_reason():
         _gen()
 
 
-def test_refresh_endpoint_job_always_exists():
-    assert "refresh_endpoint" in _gen()["resources"]["jobs"]
+def test_refresh_endpoint_exists_only_where_there_is_an_endpoint():
+    """Emiti-lo sempre deployava um job inútil no bundle de batch — e com dois
+    bundles de serving no mesmo domínio, dois jobs de mesmo nome no workspace,
+    indistinguíveis na UI."""
+    register_serving_config(_batch())
+    assert "refresh_endpoint" not in _gen()["resources"]["jobs"]
+
+    clear_registry()
+    register_serving_config(OnlineServingConfig(domain="exemplo", model_name="modelo_online"))
+    assert "refresh_endpoint" in _gen(resolve_alias_version=lambda f, a: 1)["resources"]["jobs"]
 
 
 def test_endpoints_are_omitted_when_there_is_no_online_config():
