@@ -15,6 +15,7 @@ imports para o topo, ou adicionar uma fachada em `__init__.py` que importe
 adapters.
 """
 
+import pathlib
 import subprocess
 import sys
 
@@ -52,3 +53,32 @@ def test_importing_the_domain_contract_pulls_no_infrastructure():
     """É o que o domínio importa para declarar suas feature tables, e é o que
     acaba dentro do artefato MLflow junto com o modelo."""
     assert _infra_pulled_by("mlplatform.features.contract") == []
+
+
+def test_the_module_shipped_in_code_paths_imports_no_infrastructure_itself():
+    """`code_paths=[pyfunc_model.__file__]` é importado pelo MLflow DENTRO do
+    container do endpoint de serving, onde pyspark, delta e o SDK não existem.
+
+    A checagem é sobre os imports do PRÓPRIO arquivo, não sobre o fecho
+    transitivo: o módulo legitimamente importa mlflow (é uma subclasse de
+    PythonModel), e o mlflow importa pyspark quando ele está disponível. Medir
+    sys.modules aqui confundiria "este código exige" com "o mlflow aproveitou se
+    tinha" — e reprovaria por um motivo que não é risco nenhum.
+
+    Antes o code_paths apontava para o pacote inteiro do framework, o que hoje
+    levaria os adapters junto — e aí sim o endpoint quebraria."""
+    import ast
+
+    from mlplatform.training import pyfunc_model
+
+    tree = ast.parse(pathlib.Path(pyfunc_model.__file__).read_text(encoding="utf-8"))
+    roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            roots.add(node.module.split(".")[0])
+
+    assert not roots & {"pyspark", "delta", "databricks"}
+    # e não pode arrastar o resto do framework junto
+    assert "mlplatform" not in roots
