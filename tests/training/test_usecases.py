@@ -21,6 +21,7 @@ from mlplatform.testing import (
 )
 from mlplatform.training.contract import FeatureLookupSpec, TrainingConfig
 from mlplatform.training.usecases import (
+    COMBO_RUN_PREFIX,
     FIT_TASK,
     PREPARE_TASK,
     RESULTS_KEY,
@@ -117,17 +118,59 @@ def test_splits_never_cut_a_reference_date_in_half():
     assert not dates["train"] & dates["test"]
 
 
-def test_fit_evaluates_every_combination_and_hands_results_forward():
+def _fit(tracker=None, config=None):
     frame = _frame()
     scratch = FakeScratchStore({f"{PREFIX}_train": frame, f"{PREFIX}_val": frame})
     channel = FakeTaskChannel(initial={(PREPARE_TASK, RUN_ID_KEY): "run-mlflow-1"})
+    tracker = tracker or FakeExperimentTracker()
+    results = FitAndCompare(scratch=scratch, tracker=tracker, channel=channel).execute(
+        config=config or _config(), catalog="workspace", scorer=_scorer
+    )
+    return results, tracker, channel
 
-    results = FitAndCompare(
-        scratch=scratch, tracker=FakeExperimentTracker(), channel=channel
-    ).execute(config=_config(), catalog="workspace", scorer=_scorer)
+
+def test_fit_evaluates_every_combination_and_hands_results_forward():
+    results, _, channel = _fit()
 
     assert len(results) == 2
     assert json.loads(channel.values[RESULTS_KEY])
+
+
+def test_each_combination_gets_its_own_nested_run():
+    """Um run filho por combinação, todos aninhados no run pai da execução.
+
+    A versão anterior logava todas as combinações no MESMO run. Como os
+    parâmetros do MLflow são imutáveis, a segunda combinação levantava
+    `Changing param values is not allowed` — o pipeline morria antes de
+    comparar qualquer coisa. Nunca apareceu porque o job de treino não tinha
+    sido executado ainda.
+    """
+    _, tracker, _ = _fit()
+
+    parents = {parent for parent, _name, _child in tracker.child_runs}
+    names = [name for _parent, name, _child in tracker.child_runs]
+    children = [child for _parent, _name, child in tracker.child_runs]
+
+    assert parents == {"run-mlflow-1"}
+    assert names == [f"{COMBO_RUN_PREFIX}0", f"{COMBO_RUN_PREFIX}1"]
+    assert len(set(children)) == 2
+
+
+def test_hyperparameters_are_logged_on_the_children_never_on_the_parent():
+    """O run pai guarda o resultado da execução; as combinações ficam nos filhos.
+
+    Sem isso as duas combinações colidem na mesma chave de parâmetro, e a
+    métrica de cada uma vira um ponto da mesma série — indistinguíveis na UI.
+    """
+    _, tracker, _ = _fit()
+
+    children = {child for _p, _n, child in tracker.child_runs}
+    logged_params = {run_id for run_id, _params, _prefix in tracker.params}
+    logged_metrics = {run_id for run_id, _name, _value in tracker.metrics}
+
+    assert logged_params == children
+    assert logged_metrics == children
+    assert "run-mlflow-1" not in logged_params
 
 
 def _register(scratch=None, channel=None, publisher=None, audit=None, config=None, results=None):

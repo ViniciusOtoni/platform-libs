@@ -53,6 +53,23 @@ class MlflowTracker:
         with mlflow.start_run() as run:
             return run.info.run_id
 
+    def start_child_run(self, parent_run_id: str, name: str) -> str:
+        """Cria um run aninhado sob o pai e devolve seu id.
+
+        O `mlflow.parentRunId` é gravado no momento da criação, com o pai
+        ativo — por isso o run pai é reaberto aqui. Depois disso o filho é
+        endereçado só pelo id, e reabri-lo para logar não desfaz o vínculo.
+        """
+        import mlflow
+
+        # A ordem importa: o pai é entrado primeiro, e é a presença dele no
+        # stack que faz `nested=True` gravar o vínculo.
+        with (
+            mlflow.start_run(run_id=parent_run_id),
+            mlflow.start_run(run_name=name, nested=True) as child,
+        ):
+            return child.info.run_id
+
     def log_params(self, run_id: str, params: dict, prefix: str = "") -> None:
         import mlflow
 
