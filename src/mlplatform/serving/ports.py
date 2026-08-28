@@ -40,10 +40,17 @@ class ModelRegistry(Protocol):
 
 
 class EndpointGateway(Protocol):
-    """Atualiza o endpoint para a resolução corrente do alias.
+    """Aponta o endpoint para uma versão do modelo.
 
     Existe porque o `entity_version` do recurso congela no momento da geração:
     mover o alias depois exige este passo, ou gerar os recursos de novo.
+
+    Recebe a VERSÃO já resolvida, e não o alias: a API de serving rejeita
+    `<modelo>@<alias>` em `entity_name` — trata a string inteira como nome de
+    modelo e responde `Registered model '...@champion' does not exist`. É a
+    mesma limitação já conhecida do DABs, e vale para o endpoint também.
     """
 
-    def update_to_alias(self, endpoint_name: str, model_name: str, full_model_name: str, alias: str) -> None: ...
+    def update_to_version(
+        self, endpoint_name: str, model_name: str, full_model_name: str, version: int
+    ) -> None: ...

@@ -281,7 +281,7 @@ def score_batch(argv: list[str] | None = None) -> int:
 
 
 def refresh_endpoint(argv: list[str] | None = None) -> int:
-    from .serving.adapters import SdkEndpointGateway
+    from .serving.adapters import SdkEndpointGateway, SdkModelRegistry
     from .serving.contract import get_serving_config
     from .serving.usecases import RefreshEndpoint
 
@@ -296,7 +296,7 @@ def refresh_endpoint(argv: list[str] | None = None) -> int:
     _load(args)
     config = get_serving_config(args.model_name)
 
-    name = RefreshEndpoint(gateway=SdkEndpointGateway()).execute(
+    name = RefreshEndpoint(gateway=SdkEndpointGateway(), registry=SdkModelRegistry()).execute(
         config=config, catalog=args.catalog, endpoint_name=args.endpoint_name
     )
     print(f"[mlplatform] endpoint '{name}' reaponta para o alias '{config.alias}'", flush=True)

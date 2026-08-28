@@ -129,7 +129,7 @@ def test_refresh_points_the_endpoint_at_the_current_alias():
     gateway = FakeEndpointGateway()
     config = OnlineServingConfig(domain="exemplo", model_name="propensao")
 
-    name = RefreshEndpoint(gateway=gateway).execute(
+    name = RefreshEndpoint(gateway=gateway, registry=FakeModelRegistry(version=8)).execute(
         config=config, catalog="workspace", endpoint_name="dev_alguem_exemplo-propensao-serving"
     )
 
@@ -137,4 +137,23 @@ def test_refresh_points_the_endpoint_at_the_current_alias():
     assert name == "dev_alguem_exemplo-propensao-serving"
     assert gateway.updates[0]["endpoint_name"] == "dev_alguem_exemplo-propensao-serving"
     assert gateway.updates[0]["full_model_name"] == "workspace.exemplo_models.propensao"
-    assert gateway.updates[0]["alias"] == "champion"
+    assert gateway.updates[0]["version"] == 8
+
+
+def test_the_alias_is_resolved_before_reaching_the_endpoint_api():
+    """A API de serving rejeita `<modelo>@<alias>` em `entity_name`: trata a
+    string inteira como nome de modelo e responde que ele não existe. É a mesma
+    limitação já conhecida do DABs, e nunca tinha aparecido porque o refresh
+    nunca chegou a rodar."""
+    gateway, registry = FakeEndpointGateway(), FakeModelRegistry(version=8)
+
+    RefreshEndpoint(gateway=gateway, registry=registry).execute(
+        config=OnlineServingConfig(domain="exemplo", model_name="propensao"),
+        catalog="workspace",
+        endpoint_name="exemplo-propensao-serving",
+    )
+
+    assert registry.resolved == [("workspace.exemplo_models.propensao", "champion")]
+    # o que chega no gateway é versão, nunca alias
+    assert "alias" not in gateway.updates[0]
+    assert "@" not in gateway.updates[0]["full_model_name"]

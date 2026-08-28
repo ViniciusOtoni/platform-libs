@@ -149,13 +149,15 @@ class FakeEndpointGateway:
     def __init__(self) -> None:
         self.updates: list[dict] = []
 
-    def update_to_alias(self, endpoint_name: str, model_name: str, full_model_name: str, alias: str) -> None:
+    def update_to_version(
+        self, endpoint_name: str, model_name: str, full_model_name: str, version: int
+    ) -> None:
         self.updates.append(
             {
                 "endpoint_name": endpoint_name,
                 "model_name": model_name,
                 "full_model_name": full_model_name,
-                "alias": alias,
+                "version": version,
             }
         )
 

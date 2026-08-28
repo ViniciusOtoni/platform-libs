@@ -106,18 +106,26 @@ class RefreshEndpoint:
     endpoint sozinho — este use case é o que fecha essa lacuna.
     """
 
-    def __init__(self, gateway: EndpointGateway):
+    def __init__(self, gateway: EndpointGateway, registry: ModelRegistry):
         self._gateway = gateway
+        self._registry = registry
 
     def execute(self, config: OnlineServingConfig, catalog: str, endpoint_name: str) -> str:
         # O nome vem de fora, resolvido pelo DABs no deploy. Derivá-lo aqui
         # ignorava o prefixo de target (`dev_<usuario>_`) e procurava um
         # endpoint que não existe com aquele nome.
         validate_endpoint_name(endpoint_name)
-        self._gateway.update_to_alias(
+        full_model_name = derive_model_name(catalog, config.domain, config.model_name)
+
+        # O alias é resolvido aqui: a API de serving não o aceita em
+        # `entity_name` — trata `<modelo>@champion` como nome de modelo e
+        # responde que ele não existe.
+        version = self._registry.version_for_alias(full_model_name, config.alias)
+
+        self._gateway.update_to_version(
             endpoint_name=endpoint_name,
             model_name=config.model_name,
-            full_model_name=derive_model_name(catalog, config.domain, config.model_name),
-            alias=config.alias,
+            full_model_name=full_model_name,
+            version=version,
         )
         return endpoint_name
