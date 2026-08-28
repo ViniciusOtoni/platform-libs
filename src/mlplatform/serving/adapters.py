@@ -55,7 +55,18 @@ class DeltaPredictionWriter:
         # saveAsTable não cria o schema em Unity Catalog.
         schema = table_name.rsplit(".", 1)[0]
         self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-        df.write.format("delta").mode("append").saveAsTable(table_name)
+
+        # mergeSchema porque o conjunto de colunas CRESCE por motivos rotineiros:
+        # o domínio adiciona uma feature ao FeatureLookup, ou o framework passa a
+        # gravar uma coluna nova (foi o caso de `model_version`). Sem ele o
+        # append falha com DELTA_METADATA_MISMATCH e o job só volta a rodar
+        # depois de alguém alterar a tabela à mão.
+        #
+        # Só ADIÇÃO de coluna: as linhas antigas leem NULL na coluna nova, o
+        # histórico continua intacto, e a tabela segue append-only — que é a
+        # propriedade de que o data drift depende. mergeSchema não reescreve nem
+        # apaga nada.
+        df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(table_name)
 
 
 class SdkModelRegistry:
