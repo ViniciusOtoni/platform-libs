@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlplatform"
-version = "3.5.5"
+version = "3.5.6"
 description = "Framework do ecossistema de MLOps no Databricks: features, training, serving e monitoring."
 requires-python = ">=3.11"
 # pyspark e delta-spark NÃO entram aqui: o runtime do Databricks já os fornece,
@@ -43,7 +43,7 @@ mlp-generate-bundle = "mlplatform.entrypoints:generate_bundle"
 mlp-score-batch = "mlplatform.entrypoints:score_batch"
 mlp-refresh-endpoint = "mlplatform.entrypoints:refresh_endpoint"
 mlp-prepare-training-set = "mlplatform.entrypoints:prepare_training_set"
-mlp-fit-and-compare = "mlplatform.entrypoints:fit_and_compare"
+mlp-fit-compare = "mlplatform.entrypoints:fit_and_compare"
 mlp-select-test-register = "mlplatform.entrypoints:select_test_register"
 
 [project.optional-dependencies]
