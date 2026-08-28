@@ -86,3 +86,40 @@ def test_the_child_run_is_named_for_the_combination(fake_mlflow):
     MlflowTracker().start_child_run("pai-1", "combo_3")
 
     assert fake_mlflow.calls[1]["run_name"] == "combo_3"
+
+
+# --------------------------------------------------------------------------
+# Requisitos gravados no artefato do modelo
+# --------------------------------------------------------------------------
+
+
+def test_the_framework_is_never_a_serving_requirement():
+    """O MLflow infere `mlplatform==<versão>` porque a classe pyfunc vem dessa
+    distribuição. Só que o framework não está no PyPI — é wheel de Release no
+    GitHub. O pip do container de serving não resolve o nome, o build morre com
+    `user_pip_resolution`, e o endpoint fica preso na versão anterior.
+
+    Confirmado ao vivo: a versão sem essa linha serve; a versão com ela não.
+    """
+    from mlplatform.training.adapters import serving_pip_requirements
+
+    assert not [r for r in serving_pip_requirements() if r.startswith("mlplatform")]
+
+
+def test_the_feature_lookup_client_is_required():
+    """É o que resolve os FeatureLookup dentro do container. O cliente de
+    Feature Engineering o acrescentava sozinho ao inferir os requisitos;
+    declarando a lista à mão, passou a ser responsabilidade nossa."""
+    from mlplatform.training.adapters import serving_pip_requirements
+
+    assert any(r.startswith("databricks-feature-lookup") for r in serving_pip_requirements())
+
+
+def test_every_requirement_is_pinned_to_what_actually_trained():
+    """Versões diferentes de scikit-learn nem sempre desserializam o pickle uma
+    da outra — o container precisa carregar com a versão que produziu."""
+    from mlplatform.training.adapters import serving_pip_requirements
+
+    unpinned = [r for r in serving_pip_requirements() if "==" not in r]
+
+    assert unpinned == ["databricks-feature-lookup==1.*"] or not unpinned
