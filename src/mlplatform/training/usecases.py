@@ -12,7 +12,7 @@ from .pipeline import build_pipeline
 from .ports import ExperimentTracker, ModelPublisher, ScratchStore, TaskChannel, TrainingSetBuilder
 from .quality import run_sanity_gate
 from .selection import select_best
-from .split import assign_split, compute_split_dates
+from .split import as_date, assign_split, compute_split_dates
 
 COMPONENT = "training"
 
@@ -61,11 +61,14 @@ class PrepareTrainingSet:
         training_set = self._builder.build(config.spine_table, config)
         df = self._builder.to_pandas(training_set)
 
-        dates = sorted({d for d in df[config.reference_date_column]})
+        # `as_date` aqui e não lá embaixo: é esta a fronteira onde o pandas
+        # entra no domínio, e a partir daqui tudo é `date`.
+        reference_dates = [as_date(d) for d in df[config.reference_date_column]]
+        dates = sorted(set(reference_dates))
         train_end, val_end = compute_split_dates(
             dates, config.train_pct, config.val_pct, config.test_pct
         )
-        df["_split"] = [assign_split(d, train_end, val_end) for d in df[config.reference_date_column]]
+        df["_split"] = [assign_split(d, train_end, val_end) for d in reference_dates]
 
         prefix = _scratch_prefix(catalog, config.model_name)
         for split in ("train", "val", "test"):
