@@ -287,12 +287,17 @@ def refresh_endpoint(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mlp-refresh-endpoint")
     _common_args(parser)
     parser.add_argument("--model_name", required=True)
+    # Injetado pelo DABs a partir do recurso do endpoint, já com o prefixo do
+    # target. Recalcular o nome aqui erra em qualquer target que não seja prod.
+    parser.add_argument("--endpoint_name", required=True)
     args = parser.parse_args(argv)
 
     _load(args)
     config = get_serving_config(args.model_name)
 
-    name = RefreshEndpoint(gateway=SdkEndpointGateway()).execute(config=config, catalog=args.catalog)
+    name = RefreshEndpoint(gateway=SdkEndpointGateway()).execute(
+        config=config, catalog=args.catalog, endpoint_name=args.endpoint_name
+    )
     print(f"[mlplatform] endpoint '{name}' reaponta para o alias '{config.alias}'", flush=True)
     return 0
 

@@ -77,11 +77,38 @@ def test_refresh_endpoint_exists_only_where_there_is_an_endpoint():
     bundles de serving no mesmo domínio, dois jobs de mesmo nome no workspace,
     indistinguíveis na UI."""
     register_serving_config(_batch())
-    assert "refresh_endpoint" not in _gen()["resources"]["jobs"]
+    assert not [k for k in _gen()["resources"]["jobs"] if k.startswith("refresh_endpoint")]
 
     clear_registry()
     register_serving_config(OnlineServingConfig(domain="exemplo", model_name="modelo_online"))
-    assert "refresh_endpoint" in _gen(resolve_alias_version=lambda f, a: 1)["resources"]["jobs"]
+    jobs = _gen(resolve_alias_version=lambda f, a: 1)["resources"]["jobs"]
+    assert "refresh_endpoint_modelo_online" in jobs
+
+
+def test_the_refresh_job_receives_the_deployed_endpoint_name():
+    """O DABs prefixa os recursos por target (`dev_<usuario>_...`). Derivar o
+    nome dentro do job ignora esse prefixo e procura um endpoint inexistente —
+    foi assim que o refresh falhou ao vivo. A referência abaixo é resolvida pelo
+    próprio DABs no deploy, então vale em qualquer target."""
+    register_serving_config(OnlineServingConfig(domain="exemplo", model_name="modelo_online"))
+
+    job = _gen(resolve_alias_version=lambda f, a: 1)["resources"]["jobs"]["refresh_endpoint_modelo_online"]
+    named = job["tasks"][0]["python_wheel_task"]["named_parameters"]
+
+    assert named["endpoint_name"] == (
+        "${resources.model_serving_endpoints.exemplo-modelo_online-serving.name}"
+    )
+    assert named["model_name"] == "modelo_online"
+
+
+def test_the_refresh_job_has_no_parameter_the_user_must_fill_in():
+    """`model_name` era um job parameter com default vazio, e o entrypoint o
+    exige: qualquer execução agendada morria com KeyError: ''."""
+    register_serving_config(OnlineServingConfig(domain="exemplo", model_name="modelo_online"))
+
+    job = _gen(resolve_alias_version=lambda f, a: 1)["resources"]["jobs"]["refresh_endpoint_modelo_online"]
+
+    assert all(p["default"] for p in job["parameters"])
 
 
 def test_endpoints_are_omitted_when_there_is_no_online_config():
