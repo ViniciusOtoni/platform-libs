@@ -147,6 +147,49 @@ _SERVING_PACKAGES = (
 _FEATURE_LOOKUP_REQUIREMENT = "databricks-feature-lookup==1.*"
 
 
+def pyfunc_code_path(model: Any) -> str:
+    """Monta, num diretório temporário, a árvore de pacotes do módulo da classe
+    pyfunc — e devolve a raiz dela para o `code_paths`.
+
+    O cloudpickle serializa a classe POR REFERÊNCIA: o artefato guarda
+    `mlplatform.training.pyfunc_model.FeaturePlatformModel`, e para carregar o
+    modelo o container precisa importar exatamente esse caminho.
+
+    Passar o arquivo solto não resolve — ele chega como `pyfunc_model.py`, sem
+    os pacotes acima, e o import falha com "missing Python dependency". Foi o
+    que aconteceu ao vivo: o build do container passou e o modelo não carregou.
+
+    Passar o pacote inteiro também não serve: levaria os adapters junto, com
+    pyspark e o SDK, para dentro de um container onde nada disso existe.
+
+    Então reconstruímos só o esqueleto: `__init__.py` VAZIOS mais o módulo da
+    classe. Os `__init__` são vazios de propósito — copiar os verdadeiros
+    traria de volta o que estamos evitando.
+
+    Também funciona para uma classe pyfunc do próprio domínio, que mora noutro
+    pacote: a árvore é derivada do módulo da classe, não fixada no framework.
+    """
+    import os
+    import shutil
+    import sys
+    import tempfile
+
+    module_name = type(model).__module__
+    module = sys.modules[module_name]
+    parts = module_name.split(".")
+
+    root = tempfile.mkdtemp(prefix="mlp_code_path_")
+    package_dir = root
+    for part in parts[:-1]:
+        package_dir = os.path.join(package_dir, part)
+        os.makedirs(package_dir, exist_ok=True)
+        with open(os.path.join(package_dir, "__init__.py"), "w"):
+            pass
+
+    shutil.copy(module.__file__, os.path.join(package_dir, f"{parts[-1]}.py"))
+    return os.path.join(root, parts[0])
+
+
 def serving_pip_requirements() -> list[str]:
     """Pina as versões realmente instaladas no ambiente de treino.
 
@@ -185,17 +228,13 @@ class FeatureEngineeringPublisher:
         import mlflow
         from databricks.feature_engineering import FeatureEngineeringClient
 
-        from . import pyfunc_model
-
         mlflow.set_registry_uri("databricks-uc")
         self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {full_model_name.rsplit('.', 1)[0]}")
 
-        # code_paths aponta para o MÓDULO da classe pyfunc, não para o pacote
-        # inteiro. O MLflow importa o que está aqui dentro do container do
-        # endpoint de serving, onde pyspark, delta e o databricks-sdk não
-        # existem. Empacotar o framework todo levaria os adapters junto, e o
-        # endpoint quebraria num import — sem nenhum teste reclamar, porque
-        # nenhum teste roda dentro daquele container.
+        # code_paths leva só o esqueleto de pacotes da classe pyfunc — ver
+        # `pyfunc_code_path`. Empacotar o framework todo levaria os adapters
+        # junto, e o endpoint quebraria num import, sem nenhum teste reclamar,
+        # porque nenhum teste roda dentro daquele container.
         with mlflow.start_run(run_id=run_id):
             FeatureEngineeringClient().log_model(
                 model=model,
@@ -203,7 +242,7 @@ class FeatureEngineeringPublisher:
                 flavor=mlflow.pyfunc,
                 training_set=training_set,
                 registered_model_name=full_model_name,
-                code_paths=[pyfunc_model.__file__],
+                code_paths=[pyfunc_code_path(model)],
                 pip_requirements=serving_pip_requirements(),
             )
             mlflow.set_tag("git_commit", git_commit)
