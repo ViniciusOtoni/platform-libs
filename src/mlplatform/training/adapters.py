@@ -132,7 +132,7 @@ class FeatureEngineeringPublisher:
         run_id: str,
         git_commit: str,
         git_branch: str,
-    ) -> None:
+    ) -> int:
         import mlflow
         from databricks.feature_engineering import FeatureEngineeringClient
 
@@ -158,6 +158,22 @@ class FeatureEngineeringPublisher:
             )
             mlflow.set_tag("git_commit", git_commit)
             mlflow.set_tag("git_branch", git_branch)
+
+        # A versão é encontrada pelo run que a produziu, e não por "a maior
+        # versão do modelo": duas execuções concorrentes do pipeline
+        # registrariam duas versões, e a maior poderia ser a da outra.
+        client = mlflow.MlflowClient(registry_uri="databricks-uc")
+        for version in client.search_model_versions(f"name='{full_model_name}'"):
+            if version.run_id == run_id:
+                return int(version.version)
+        raise RuntimeError(f"nenhuma versão de {full_model_name} corresponde ao run {run_id}")
+
+    def promote(self, full_model_name: str, version: int, alias: str) -> None:
+        import mlflow
+
+        mlflow.MlflowClient(registry_uri="databricks-uc").set_registered_model_alias(
+            full_model_name, alias, version
+        )
 
 
 class DbutilsTaskChannel:

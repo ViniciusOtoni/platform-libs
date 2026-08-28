@@ -247,10 +247,16 @@ class FakeTrainingSetBuilder:
 
 
 class FakeModelPublisher:
-    def __init__(self) -> None:
+    def __init__(self, version: int = 1) -> None:
+        self._version = version
         self.published: list[dict] = []
+        self.promotions: list[tuple[str, int, str]] = []
 
-    def publish(self, model, training_set, full_model_name, run_id, git_commit, git_branch) -> None:
+    def publish(self, model, training_set, full_model_name, run_id, git_commit, git_branch) -> int:
         self.published.append(
             {"model": model, "full_model_name": full_model_name, "run_id": run_id, "git_commit": git_commit}
         )
+        return self._version
+
+    def promote(self, full_model_name: str, version: int, alias: str) -> None:
+        self.promotions.append((full_model_name, version, alias))

@@ -62,7 +62,13 @@ class ModelPublisher(Protocol):
         run_id: str,
         git_commit: str,
         git_branch: str,
-    ) -> None: ...
+    ) -> int:
+        """Registra e devolve o número da versão criada."""
+        ...
+
+    def promote(self, full_model_name: str, version: int, alias: str) -> None:
+        """Aponta o alias para a versão."""
+        ...
 
 
 class TaskChannel(Protocol):

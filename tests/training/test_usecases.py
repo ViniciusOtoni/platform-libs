@@ -276,3 +276,41 @@ def test_combinations_with_a_non_finite_metric_are_discarded():
     )
 
     assert publisher.published  # escolheu a combinação finita em vez da primeira da lista
+
+
+def test_the_registered_version_is_promoted_to_the_alias():
+    """Fecha o ciclo com o serving. Batch e endpoint consomem
+    `models:/<nome>@champion`; sem a promoção o modelo ficava registrado sem que
+    nada o servisse — e, na primeira execução de um domínio, o alias nem
+    existia, então o serving falhava por completo."""
+    publisher = FakeModelPublisher(version=12)
+
+    name, _, _ = _register(publisher=publisher)
+
+    assert publisher.promotions == [(name, 12, "champion")]
+
+
+def test_a_model_that_fails_the_gate_is_never_promoted():
+    """A ordem importa mais que a promoção em si: promover antes do gate
+    apontaria o champion para um modelo reprovado, e o serving passaria a
+    entregá-lo imediatamente."""
+    publisher = FakeModelPublisher()
+    empty = pd.DataFrame(columns=list(_frame().columns))
+
+    with pytest.raises(SanityGateFailure):
+        _register(
+            scratch=FakeScratchStore({f"{PREFIX}_train": _frame(), f"{PREFIX}_test": empty}),
+            publisher=publisher,
+        )
+
+    assert publisher.promotions == []
+
+
+def test_promotion_can_be_turned_off():
+    """Para o domínio que queira um gate humano entre treinar e servir."""
+    publisher = FakeModelPublisher()
+
+    _register(config=_config(promotion_alias=None), publisher=publisher)
+
+    assert publisher.published  # registrou
+    assert publisher.promotions == []  # mas não promoveu
