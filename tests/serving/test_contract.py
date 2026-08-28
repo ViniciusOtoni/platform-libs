@@ -10,6 +10,7 @@ from mlplatform.serving.contract import (
     online_configs,
     register_serving_config,
 )
+from mlplatform.serving.structure import InferenceBatchStruct
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +27,11 @@ def _batch(**o) -> BatchServingConfig:
             "model_name": "modelo_batch",
             "spine_inference_table": "workspace.exemplo.spine",
             "schedule_cron": "0 0 6 * * ?",
+            "output": InferenceBatchStruct(
+                primary_key=["customer_id"],
+                ts_date="reference_date",
+                predict_cols=["prediction"],
+            ),
             **o,
         }
     )

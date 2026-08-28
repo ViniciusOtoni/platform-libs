@@ -7,8 +7,8 @@ from mlplatform.core.quality import Finding, gate_passed
 
 from .contract import BatchServingConfig, OnlineServingConfig
 from .naming import validate_endpoint_name
-from .ports import BatchScorer, EndpointGateway, PredictionWriter
-from .quality import run_predictions_gate
+from .ports import BatchScorer, EndpointGateway, ModelRegistry, PredictionWriter
+from .quality import run_predictions_gate, run_structure_gate
 
 COMPONENT = "serving"
 PREDICTION_COLUMN = "prediction"
@@ -30,11 +30,13 @@ class ScoreBatch:
         self,
         scorer: BatchScorer,
         writer: PredictionWriter,
+        registry: ModelRegistry,
         audit: AuditStore,
         clock: Clock,
     ):
         self._scorer = scorer
         self._writer = writer
+        self._registry = registry
         self._audit = audit
         self._clock = clock
 
@@ -51,13 +53,24 @@ class ScoreBatch:
         full_model_name = derive_model_name(catalog, config.domain, config.model_name)
         predictions_table = derive_predictions_table_name(catalog, config.domain, config.model_name)
 
+        # A versão é resolvida aqui, e não deixada implícita no alias: ela vai
+        # gravada em cada linha da saída. Sem isso o monitoramento não consegue
+        # atribuir uma mudança de score a troca de modelo em vez de drift.
+        model_version = self._registry.version_for_alias(full_model_name, config.alias)
+
         spine = self._scorer.read_table(config.spine_inference_table)
         input_rows = self._scorer.count(spine)
-        predictions = self._scorer.score(f"models:/{full_model_name}@{config.alias}", spine)
-
-        findings = run_predictions_gate(
-            self._scorer.to_pandas(predictions), PREDICTION_COLUMN, input_rows
+        predictions = self._scorer.score(
+            f"models:/{full_model_name}@{config.alias}", spine, model_version
         )
+
+        scored = self._scorer.to_pandas(predictions)
+        # Estrutura antes de conteúdo: uma coluna declarada e ausente invalida
+        # os checks seguintes, que passariam a medir outra coisa.
+        findings = [
+            *run_structure_gate(scored, config.output),
+            *run_predictions_gate(scored, PREDICTION_COLUMN, input_rows),
+        ]
 
         if not gate_passed(findings):
             self._record(predictions_table, "FAILED", today, run_id, git_commit, git_branch)
