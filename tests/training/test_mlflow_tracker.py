@@ -123,3 +123,54 @@ def test_every_requirement_is_pinned_to_what_actually_trained():
     unpinned = [r for r in serving_pip_requirements() if "==" not in r]
 
     assert unpinned == ["databricks-feature-lookup==1.*"] or not unpinned
+
+
+# --------------------------------------------------------------------------
+# O esqueleto de pacotes que viaja dentro do artefato
+# --------------------------------------------------------------------------
+
+
+def test_the_pyfunc_class_is_importable_by_its_pickled_path():
+    """O cloudpickle serializa a classe POR REFERÊNCIA. O artefato guarda
+    `mlplatform.training.pyfunc_model.FeaturePlatformModel`, e o container tem
+    que importar exatamente esse caminho para carregar o modelo.
+
+    Passar o arquivo solto ao `code_paths` não bastava: ele chegava como
+    `pyfunc_model.py`, sem os pacotes acima, e o endpoint falhava com "missing
+    Python dependency" — depois de o build do container ter passado."""
+    import pathlib
+    import subprocess
+    import sys as _sys
+
+    from mlplatform.training.adapters import pyfunc_code_path
+    from mlplatform.training.pyfunc_model import FeaturePlatformModel
+
+    root = pathlib.Path(pyfunc_code_path(FeaturePlatformModel(None)))
+
+    # Num processo limpo, com APENAS o diretório do code_paths no path — como
+    # no container, onde o framework não está instalado.
+    probe = (
+        f"import sys; sys.path.insert(0, r'{root.parent}');"
+        "import mlplatform.training.pyfunc_model as m;"
+        "print(m.FeaturePlatformModel.__name__)"
+    )
+    result = subprocess.run([_sys.executable, "-c", probe], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr[-500:]
+    assert "FeaturePlatformModel" in result.stdout
+
+
+def test_the_package_skeleton_carries_nothing_but_the_pyfunc_module():
+    """Os `__init__.py` são vazios de propósito: copiar os verdadeiros traria os
+    adapters de volta para dentro do container, com pyspark e o SDK."""
+    import pathlib
+
+    from mlplatform.training.adapters import pyfunc_code_path
+    from mlplatform.training.pyfunc_model import FeaturePlatformModel
+
+    root = pathlib.Path(pyfunc_code_path(FeaturePlatformModel(None)))
+    files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*.py"))
+
+    assert files == ["__init__.py", "training/__init__.py", "training/pyfunc_model.py"]
+    assert (root / "__init__.py").read_text() == ""
+    assert (root / "training" / "__init__.py").read_text() == ""
