@@ -67,10 +67,18 @@ def _config(**o) -> TrainingConfig:
 
 
 def _frame(n: int = 10) -> pd.DataFrame:
+    """Reproduz o que `toPandas()` devolve de verdade.
+
+    A coluna de data sai como datetime64, não como objetos `date`: o Spark
+    converte DATE em Timestamp na volta para o pandas. O fixture antigo usava
+    `date` puro — mais confortável, e foi por isso que ninguém viu que
+    `str(Timestamp)` produz "2026-01-01 00:00:00" e estoura o
+    `date.fromisoformat` do outro lado do taskValues.
+    """
     return pd.DataFrame(
         {
             "customer_id": range(n),
-            "reference_date": [date(2026, 1, i + 1) for i in range(n)],
+            "reference_date": pd.to_datetime([date(2026, 1, i + 1) for i in range(n)]),
             "txn_count": [i % 5 for i in range(n)],
             "label": [i % 2 for i in range(n)],
         }
@@ -98,6 +106,25 @@ def test_prepare_materializes_the_three_splits_and_publishes_the_window():
     assert channel.values[RUN_ID_KEY] == "run-mlflow-1"
     assert channel.values[WINDOW_START_KEY] == "2026-01-01"
     assert channel.values[WINDOW_END_KEY] == "2026-01-10"
+
+
+def test_the_published_window_is_a_plain_date():
+    """O que atravessa o taskValues precisa voltar por `date.fromisoformat`.
+
+    Com a coluna em datetime64, `str()` do valor produz "2026-01-01 00:00:00" —
+    que o `fromisoformat` do lado de lá rejeita, derrubando a última task do
+    pipeline depois de treino e comparação já terem custado."""
+    channel = FakeTaskChannel()
+
+    PrepareTrainingSet(
+        builder=FakeTrainingSetBuilder(_frame()),
+        scratch=FakeScratchStore(),
+        tracker=FakeExperimentTracker(),
+        channel=channel,
+    ).execute(config=_config(), catalog="workspace")
+
+    assert date.fromisoformat(channel.values[WINDOW_START_KEY]) == date(2026, 1, 1)
+    assert date.fromisoformat(channel.values[WINDOW_END_KEY]) == date(2026, 1, 10)
 
 
 def test_splits_never_cut_a_reference_date_in_half():

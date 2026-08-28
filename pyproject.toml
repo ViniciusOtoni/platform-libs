@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlplatform"
-version = "3.5.7"
+version = "3.5.8"
 description = "Framework do ecossistema de MLOps no Databricks: features, training, serving e monitoring."
 requires-python = ">=3.11"
 # pyspark e delta-spark NÃO entram aqui: o runtime do Databricks já os fornece,
