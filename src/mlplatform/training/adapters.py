@@ -87,11 +87,21 @@ class MlflowTracker:
         """
         import mlflow
 
+        # O experiment vem do run pai, explicitamente. Cada task do job é um
+        # PROCESSO próprio, e `set_experiment` só vale dentro do processo que o
+        # chamou: aqui, em `fit_and_compare`, não há experiment ativo nenhum —
+        # quem o definiu foi `prepare_training_set`, noutra task. Sem passá-lo,
+        # a criação do filho vai com experiment_id=None e o MLflow responde
+        # RESOURCE_DOES_NOT_EXIST. `nested=True` sozinho não herda isso.
+        experiment_id = mlflow.get_run(parent_run_id).info.experiment_id
+
         # A ordem importa: o pai é entrado primeiro, e é a presença dele no
         # stack que faz `nested=True` gravar o vínculo.
         with (
             mlflow.start_run(run_id=parent_run_id),
-            mlflow.start_run(run_name=name, nested=True) as child,
+            mlflow.start_run(
+                run_name=name, nested=True, experiment_id=experiment_id
+            ) as child,
         ):
             return child.info.run_id
 
