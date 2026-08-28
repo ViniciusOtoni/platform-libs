@@ -77,7 +77,9 @@ class SdkModelRegistry:
 
 
 class SdkEndpointGateway:
-    def update_to_alias(self, endpoint_name: str, model_name: str, full_model_name: str, alias: str) -> None:
+    def update_to_version(
+        self, endpoint_name: str, model_name: str, full_model_name: str, version: int
+    ) -> None:
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.serving import ServedEntityInput
 
@@ -86,7 +88,8 @@ class SdkEndpointGateway:
             served_entities=[
                 ServedEntityInput(
                     name=model_name,
-                    entity_name=f"{full_model_name}@{alias}",
+                    entity_name=full_model_name,
+                    entity_version=str(version),
                     scale_to_zero_enabled=True,
                     workload_size="Small",
                 )
