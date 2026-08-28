@@ -31,7 +31,11 @@ class FeatureEngineeringTrainingSet:
 
 
 class DeltaScratchStore:
-    """Splits materializados em Delta entre as tasks."""
+    """Splits materializados em Delta entre as tasks.
+
+    A área é privada do pipeline e reescrita inteira a cada execução — nada
+    aqui sobrevive de propósito de um run para o outro.
+    """
 
     def __init__(self, spark):
         self._spark = spark
@@ -39,7 +43,20 @@ class DeltaScratchStore:
     def write(self, df: pd.DataFrame, table_name: str) -> None:
         schema = table_name.rsplit(".", 1)[0]
         self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-        self._spark.createDataFrame(df).write.format("delta").mode("overwrite").saveAsTable(table_name)
+        # overwriteSchema: sem ele o Delta preserva o schema da tabela que já
+        # existe e só troca os dados, falhando com DELTA_FAILED_TO_MERGE_FIELDS
+        # quando o formato muda. E ele muda por motivos rotineiros: o domínio
+        # adiciona uma feature ao FeatureLookup, ou um lookup point-in-time não
+        # acha linha e o nulo resultante transforma um bigint em double no
+        # roundtrip por pandas. Como a área é descartável, substituir o schema é
+        # a semântica correta — preservá-lo é que era o acidente.
+        (
+            self._spark.createDataFrame(df)
+            .write.format("delta")
+            .mode("overwrite")
+            .option("overwriteSchema", "true")
+            .saveAsTable(table_name)
+        )
 
     def read(self, table_name: str) -> pd.DataFrame:
         return self._spark.table(table_name).toPandas()
