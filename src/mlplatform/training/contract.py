@@ -30,6 +30,14 @@ class TrainingConfig:
     metric_direction: Literal["maximize", "minimize"]
     custom_transforms: list = field(default_factory=list)
     pyfunc_model_class: type | None = None
+    # Alias apontado para a versão recém-registrada, depois do gate passar.
+    # É o que fecha o ciclo com o serving: os dois componentes consomem
+    # `models:/<nome>@champion`, e sem esta promoção o modelo novo ficava
+    # registrado sem que nada o servisse — o serving continuava numa versão
+    # antiga, ou falhava porque o alias nem existia.
+    # `None` desliga a promoção automática, para o domínio que queira um
+    # gate humano entre treinar e servir.
+    promotion_alias: str | None = "champion"
 
     def __post_init__(self) -> None:
         total = self.train_pct + self.val_pct + self.test_pct

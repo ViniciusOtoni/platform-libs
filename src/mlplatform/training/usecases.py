@@ -188,7 +188,7 @@ class SelectTestAndRegister:
         self._tracker.log_metric(mlflow_run_id, f"test_{metric_name}", test_metric)
 
         wrapped = (config.pyfunc_model_class or _default_model_class())(pipeline)
-        self._publisher.publish(
+        version = self._publisher.publish(
             model=wrapped,
             training_set=self._builder.build(config.spine_table, config),
             full_model_name=full_model_name,
@@ -196,6 +196,19 @@ class SelectTestAndRegister:
             git_commit=git_commit,
             git_branch=git_branch,
         )
+
+        # A promoção fecha o ciclo com o serving. Sem ela o modelo ficava
+        # registrado sem que nada o servisse: batch e endpoint consomem
+        # `models:/<nome>@champion`, e o alias ou apontava para uma versão
+        # antiga, ou não existia — caso em que o serving nem subia. Promover
+        # DEPOIS do gate é o que garante que o alias nunca aponte para um
+        # modelo reprovado.
+        if config.promotion_alias:
+            self._publisher.promote(full_model_name, version, config.promotion_alias)
+            self._tracker.log_params(
+                mlflow_run_id, {"version": str(version), "alias": config.promotion_alias}, prefix="promoted__"
+            )
+
         self._record(full_model_name, "SUCCESS", window_start, window_end, run_id, git_commit, git_branch)
         return full_model_name
 
