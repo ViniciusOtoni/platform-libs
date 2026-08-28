@@ -118,6 +118,55 @@ class MlflowTracker:
             mlflow.log_metric(name, value)
 
 
+# O que o container de serving precisa instalar para carregar o modelo.
+#
+# `mlplatform` NÃO está aqui, e essa é a razão de a lista existir. O MLflow
+# infere as dependências a partir dos módulos do modelo, enxerga que a classe
+# pyfunc vem da distribuição `mlplatform` e grava `mlplatform==<versão>` no
+# requirements.txt do artefato. Só que o framework não está no PyPI — existe
+# como wheel de Release no GitHub. O pip do container não resolve o nome, o
+# build falha com `user_pip_resolution`, e o endpoint fica preso na versão
+# anterior. Confirmado ao vivo: a v5 (sem a linha) serve; a v7 (com ela) não.
+#
+# E a dependência é redundante: `code_paths` já leva o fonte do módulo pyfunc
+# para dentro do artefato, que é justamente como o container o carrega sem o
+# framework instalado.
+_SERVING_PACKAGES = (
+    "mlflow",
+    "cloudpickle",
+    "scikit-learn",
+    "numpy",
+    "scipy",
+    "pandas",
+    "psutil",
+)
+
+# Resolve os FeatureLookup dentro do container. O cliente de Feature Engineering
+# o acrescenta sozinho quando infere os requisitos; declarando a lista à mão,
+# passa a ser nossa responsabilidade.
+_FEATURE_LOOKUP_REQUIREMENT = "databricks-feature-lookup==1.*"
+
+
+def serving_pip_requirements() -> list[str]:
+    """Pina as versões realmente instaladas no ambiente de treino.
+
+    Pinar o que treinou, e não um intervalo, é o que garante que o container de
+    serving carregue o pickle do sklearn com a mesma versão que o produziu —
+    versões diferentes de scikit-learn nem sempre desserializam entre si.
+    """
+    import importlib.metadata as metadata
+
+    requirements = []
+    for package in _SERVING_PACKAGES:
+        try:
+            requirements.append(f"{package}=={metadata.version(package)}")
+        except metadata.PackageNotFoundError:
+            # Não instalado no ambiente de treino: o modelo não depende dele.
+            continue
+    requirements.append(_FEATURE_LOOKUP_REQUIREMENT)
+    return requirements
+
+
 class FeatureEngineeringPublisher:
     """Registra o modelo no Unity Catalog com a linhagem de features embutida."""
 
@@ -155,6 +204,7 @@ class FeatureEngineeringPublisher:
                 training_set=training_set,
                 registered_model_name=full_model_name,
                 code_paths=[pyfunc_model.__file__],
+                pip_requirements=serving_pip_requirements(),
             )
             mlflow.set_tag("git_commit", git_commit)
             mlflow.set_tag("git_branch", git_branch)
