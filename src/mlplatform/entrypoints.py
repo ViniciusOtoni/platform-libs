@@ -352,7 +352,7 @@ def prepare_training_set(argv: list[str] | None = None) -> int:
 def fit_and_compare(argv: list[str] | None = None) -> int:
     from .training.usecases import FitAndCompare
 
-    args = _training_parser("mlp-fit-and-compare").parse_args(argv)
+    args = _training_parser("mlp-fit-compare").parse_args(argv)
     _load(args)
     config, _spark_session, deps = _training_context(args)
 

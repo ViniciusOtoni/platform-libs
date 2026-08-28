@@ -19,7 +19,7 @@ PACKAGE_NAME = "mlplatform"
 # produção. Juntá-las torna isso impossível por construção.
 _TASKS = [
     ("prepare_training_set", "mlp-prepare-training-set", []),
-    ("fit_and_compare", "mlp-fit-and-compare", ["prepare_training_set"]),
+    ("fit_and_compare", "mlp-fit-compare", ["prepare_training_set"]),
     ("select_test_and_register", "mlp-select-test-register", ["fit_and_compare"]),
 ]
 
