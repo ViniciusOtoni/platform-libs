@@ -65,6 +65,14 @@ class DeltaScratchStore:
 class MlflowTracker:
     def start_run(self, experiment: str) -> str:
         import mlflow
+        from databricks.sdk import WorkspaceClient
+
+        # `set_experiment` cria o experiment, mas NÃO os diretórios do workspace
+        # acima dele: com `/Shared/mlplatform/<dominio>` inexistente ele falha
+        # com NOT_FOUND em vez de criar o caminho. Todo domínio novo cai nisso
+        # na primeira execução, porque o diretório dele nunca existiu antes.
+        # `mkdirs` cria a árvore inteira e é idempotente.
+        WorkspaceClient().workspace.mkdirs(experiment.rsplit("/", 1)[0])
 
         mlflow.set_experiment(experiment)
         with mlflow.start_run() as run:
