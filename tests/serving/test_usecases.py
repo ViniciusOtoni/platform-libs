@@ -104,8 +104,12 @@ def test_refresh_points_the_endpoint_at_the_current_alias():
     gateway = FakeEndpointGateway()
     config = OnlineServingConfig(domain="exemplo", model_name="propensao")
 
-    name = RefreshEndpoint(gateway=gateway).execute(config=config, catalog="workspace")
+    name = RefreshEndpoint(gateway=gateway).execute(
+        config=config, catalog="workspace", endpoint_name="dev_alguem_exemplo-propensao-serving"
+    )
 
-    assert name == "exemplo-propensao-serving"
+    # o nome usado é o que veio de fora, com o prefixo do target — não o derivado
+    assert name == "dev_alguem_exemplo-propensao-serving"
+    assert gateway.updates[0]["endpoint_name"] == "dev_alguem_exemplo-propensao-serving"
     assert gateway.updates[0]["full_model_name"] == "workspace.exemplo_models.propensao"
     assert gateway.updates[0]["alias"] == "champion"

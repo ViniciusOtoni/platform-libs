@@ -23,24 +23,19 @@ _TASKS = [
     ("select_test_and_register", "mlp-select-test-register", ["fit_and_compare"]),
 ]
 
+# `model_name` NÃO entra aqui. Ele era um job parameter com default vazio, e o
+# entrypoint o exige — então qualquer execução agendada, ou qualquer clique em
+# "Run now", morria com KeyError: ''. O nome do modelo é conhecido na geração;
+# vai estático em named_parameters, como o gerador de batch sempre fez.
 _JOB_PARAMETERS = [
-    {"name": "model_name", "default": ""},
     {"name": "catalog", "default": "${var.catalog}"},
     {"name": "git_commit", "default": "${var.git_commit}"},
     {"name": "git_branch", "default": "${var.git_branch}"},
 ]
 
 
-def generate_job_resource(
-    job_name: str = "training_pipeline",
-    environment_dependencies: list[str] | None = None,
-    domain_entry_point: str | None = None,
-) -> dict:
-    registry = get_registry()
-    if not registry:
-        raise ValueError("nenhuma TrainingConfig registrada")
-
-    named_base: dict[str, str] = {}
+def _job(model_name: str, job_name: str, domain_entry_point: str | None) -> dict:
+    named_base = {"model_name": model_name}
     if domain_entry_point:
         named_base["domain"] = domain_entry_point
 
@@ -58,9 +53,35 @@ def generate_job_resource(
             task["depends_on"] = [{"task_key": d} for d in depends_on]
         tasks.append(task)
 
-    job = {"name": job_name, "parameters": _JOB_PARAMETERS, "tasks": tasks}
+    return {"name": job_name, "parameters": _JOB_PARAMETERS, "tasks": tasks}
+
+
+def generate_job_resource(
+    job_name: str = "training_pipeline",
+    environment_dependencies: list[str] | None = None,
+    domain_entry_point: str | None = None,
+) -> dict:
+    """Um job por TrainingConfig registrada.
+
+    Antes era um job só, com `model_name` vindo de um job parameter vazio que
+    alguém teria de preencher a cada execução. Com dois modelos no mesmo
+    domínio, um deles simplesmente não tinha job.
+    """
+    registry = get_registry()
+    if not registry:
+        raise ValueError("nenhuma TrainingConfig registrada")
+
     deps = environment_dependencies if environment_dependencies is not None else default_dependencies()
-    return {"resources": {"jobs": {job_name: with_environment(job, deps)}}}
+    single = len(registry) == 1
+
+    jobs = {}
+    for model_name in registry:
+        # Com um modelo só o nome do job segue o que era antes; com vários,
+        # precisa desambiguar ou os dois colidem no mesmo caminho do workspace.
+        key = job_name if single else f"{job_name}_{model_name}"
+        jobs[key] = with_environment(_job(model_name, key, domain_entry_point), deps)
+
+    return {"resources": {"jobs": jobs}}
 
 
 def write_job_resource(

@@ -6,7 +6,7 @@ from mlplatform.core.ports import AuditStore, Clock
 from mlplatform.core.quality import Finding, gate_passed
 
 from .contract import BatchServingConfig, OnlineServingConfig
-from .naming import derive_endpoint_name, validate_endpoint_name
+from .naming import validate_endpoint_name
 from .ports import BatchScorer, EndpointGateway, PredictionWriter
 from .quality import run_predictions_gate
 
@@ -96,8 +96,10 @@ class RefreshEndpoint:
     def __init__(self, gateway: EndpointGateway):
         self._gateway = gateway
 
-    def execute(self, config: OnlineServingConfig, catalog: str) -> str:
-        endpoint_name = derive_endpoint_name(config.domain, config.model_name)
+    def execute(self, config: OnlineServingConfig, catalog: str, endpoint_name: str) -> str:
+        # O nome vem de fora, resolvido pelo DABs no deploy. Derivá-lo aqui
+        # ignorava o prefixo de target (`dev_<usuario>_`) e procurava um
+        # endpoint que não existe com aquele nome.
         validate_endpoint_name(endpoint_name)
         self._gateway.update_to_alias(
             endpoint_name=endpoint_name,

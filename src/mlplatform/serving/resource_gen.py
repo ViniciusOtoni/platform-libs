@@ -34,13 +34,29 @@ def _batch_job(config: BatchServingConfig, domain_entry_point: str | None) -> di
     }
 
 
-def _refresh_job(domain_entry_point: str | None) -> dict:
-    named: dict[str, str] = {}
+def _refresh_job(config: OnlineServingConfig, endpoint_key: str, domain_entry_point: str | None) -> dict:
+    """Um job de refresh por endpoint, com o nome REAL do endpoint embutido.
+
+    O nome não pode ser recalculado em runtime: o DABs prefixa os recursos por
+    target — em `dev` o endpoint vira `dev_<usuario>_<nome>` — e o código dentro
+    do job não conhece esse prefixo. Derivá-lo lá dentro dava
+    `ResourceDoesNotExist` apontando um endpoint que existe, só que com outro
+    nome. A referência abaixo é resolvida pelo próprio DABs no deploy, então
+    vale para qualquer target.
+
+    `model_name` também vai estático, pelo mesmo motivo do gerador de training:
+    era um job parameter vazio que derrubava qualquer execução não parametrizada
+    à mão.
+    """
+    named = {
+        "model_name": config.model_name,
+        "endpoint_name": f"${{resources.model_serving_endpoints.{endpoint_key}.name}}",
+    }
     if domain_entry_point:
         named["domain"] = domain_entry_point
     return {
-        "name": "refresh_endpoint",
-        "parameters": [{"name": "model_name", "default": ""}, *_JOB_PARAMETERS],
+        "name": f"refresh_endpoint_{config.model_name}",
+        "parameters": _JOB_PARAMETERS,
         "tasks": [
             {"task_key": "refresh_endpoint", "python_wheel_task": _wheel_task(REFRESH_ENTRY_POINT, named)}
         ],
@@ -91,8 +107,11 @@ def generate_resources(
     # como o código original fazia — deployava um job inútil no bundle de batch,
     # e com dois bundles de serving no mesmo domínio isso vira dois jobs de mesmo
     # nome no workspace, indistinguíveis na UI.
-    if online_configs():
-        jobs["refresh_endpoint"] = with_environment(_refresh_job(domain_entry_point), deps)
+    for config in online_configs().values():
+        endpoint_key = derive_endpoint_name(config.domain, config.model_name)
+        jobs[f"refresh_endpoint_{config.model_name}"] = with_environment(
+            _refresh_job(config, endpoint_key, domain_entry_point), deps
+        )
 
     for name, config in batch_configs().items():
         jobs[f"score_batch_{name}"] = with_environment(_batch_job(config, domain_entry_point), deps)
