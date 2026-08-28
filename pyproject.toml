@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlplatform"
-version = "3.5.2"
+version = "3.5.3"
 description = "Framework do ecossistema de MLOps no Databricks: features, training, serving e monitoring."
 requires-python = ">=3.11"
 # pyspark e delta-spark NÃO entram aqui: o runtime do Databricks já os fornece,
@@ -27,6 +27,13 @@ dependencies = [
     # continuava falhando — a restrição precisa ser maior que a versão embutida
     # para forçar o upgrade.
     "databricks-sdk>=0.55",
+    # Importado pelos adapters de training e serving (create_training_set,
+    # log_model, score_batch). O serverless NÃO traz este pacote — o pipeline
+    # de treino morria com ModuleNotFoundError no primeiro import, e só
+    # apareceu quando o job foi de fato executado. O adapter de features não o
+    # usa (grava Delta puro + constraint de PK), por isso aquele componente
+    # rodava enquanto estes dois nunca tinham rodado.
+    "databricks-feature-engineering>=0.16",
 ]
 
 [project.scripts]
