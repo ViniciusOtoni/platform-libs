@@ -120,8 +120,8 @@ class FakeBatchScorer:
     def to_pandas(self, df: Any) -> pd.DataFrame:
         return df
 
-    def score(self, model_uri: str, spine: Any) -> Any:
-        self.scored.append((model_uri, spine))
+    def score(self, model_uri: str, spine: Any, model_version: int) -> Any:
+        self.scored.append((model_uri, spine, model_version))
         return self._predictions
 
 
@@ -131,6 +131,18 @@ class FakePredictionWriter:
 
     def append(self, df: Any, table_name: str) -> None:
         self.appends.append((df, table_name))
+
+
+class FakeModelRegistry:
+    """Resolve qualquer alias para uma versão fixa."""
+
+    def __init__(self, version: int = 7):
+        self._version = version
+        self.resolved: list[tuple[str, str]] = []
+
+    def version_for_alias(self, full_model_name: str, alias: str) -> int:
+        self.resolved.append((full_model_name, alias))
+        return self._version
 
 
 class FakeEndpointGateway:

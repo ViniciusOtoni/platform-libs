@@ -10,10 +10,16 @@ import pandas as pd
 import pytest
 
 from mlplatform.serving.contract import BatchServingConfig, OnlineServingConfig
+from mlplatform.serving.structure import (
+    MODEL_VERSION_COLUMN,
+    SCORED_AT_COLUMN,
+    InferenceBatchStruct,
+)
 from mlplatform.serving.usecases import PredictionsGateFailure, RefreshEndpoint, ScoreBatch
 from mlplatform.testing import (
     FakeBatchScorer,
     FakeEndpointGateway,
+    FakeModelRegistry,
     FakePredictionWriter,
     FixedClock,
     InMemoryAuditStore,
@@ -21,6 +27,13 @@ from mlplatform.testing import (
 
 INSTANT = datetime(2026, 8, 26, 6, 0, 0, tzinfo=UTC)
 SPINE = pd.DataFrame({"customer_id": [1, 2], "reference_date": ["2026-08-25"] * 2})
+
+STRUCT = InferenceBatchStruct(
+    primary_key=["customer_id"],
+    ts_date="reference_date",
+    feature_cols=["txn_count"],
+    predict_cols=["prediction"],
+)
 
 
 def _batch_config(**o) -> BatchServingConfig:
@@ -30,22 +43,34 @@ def _batch_config(**o) -> BatchServingConfig:
             "model_name": "propensao",
             "spine_inference_table": "workspace.exemplo.spine_inference",
             "schedule_cron": "0 0 6 * * ?",
+            "output": STRUCT,
             **o,
         }
     )
 
 
 def _good_predictions() -> pd.DataFrame:
-    return SPINE.assign(prediction=[0.1, 0.9])
+    """Como a saída real: spine + features + predição + as colunas do framework."""
+    return SPINE.assign(
+        txn_count=[3, 5],
+        prediction=[0.1, 0.9],
+        **{SCORED_AT_COLUMN: [INSTANT] * 2, MODEL_VERSION_COLUMN: [7, 7]},
+    )
 
 
-def _run(scorer=None, writer=None, audit=None, config=None):
+def _run(scorer=None, writer=None, audit=None, config=None, registry=None):
     audit = audit or InMemoryAuditStore()
     writer = writer or FakePredictionWriter()
     scorer = scorer or FakeBatchScorer(
         tables={"workspace.exemplo.spine_inference": SPINE}, predictions=_good_predictions()
     )
-    ScoreBatch(scorer=scorer, writer=writer, audit=audit, clock=FixedClock(INSTANT)).execute(
+    ScoreBatch(
+        scorer=scorer,
+        writer=writer,
+        registry=registry or FakeModelRegistry(version=7),
+        audit=audit,
+        clock=FixedClock(INSTANT),
+    ).execute(
         config=config or _batch_config(),
         catalog="workspace",
         run_id="run-1",

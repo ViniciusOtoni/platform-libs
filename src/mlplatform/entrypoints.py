@@ -245,7 +245,7 @@ def generate_bundle(argv: list[str] | None = None) -> int:
 
 def score_batch(argv: list[str] | None = None) -> int:
     from .core.adapters import DeltaAuditStore
-    from .serving.adapters import DeltaPredictionWriter, FeatureEngineeringScorer
+    from .serving.adapters import DeltaPredictionWriter, FeatureEngineeringScorer, SdkModelRegistry
     from .serving.contract import get_serving_config
     from .serving.usecases import ScoreBatch
 
@@ -265,6 +265,7 @@ def score_batch(argv: list[str] | None = None) -> int:
     )
 
     ScoreBatch(
+        registry=SdkModelRegistry(),
         scorer=FeatureEngineeringScorer(spark),
         writer=DeltaPredictionWriter(spark),
         audit=DeltaAuditStore(spark),

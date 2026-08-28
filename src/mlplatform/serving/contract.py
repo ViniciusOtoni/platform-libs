@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 from mlplatform.core.registry import Registry
 
+from .structure import InferenceBatchStruct
+
 
 @dataclass(frozen=True)
 class BatchServingConfig:
@@ -11,6 +13,10 @@ class BatchServingConfig:
     model_name: str
     spine_inference_table: str
     schedule_cron: str
+    # Obrigatório de propósito: é a declaração do formato da tabela de saída, e
+    # o ponto de tê-la é que nenhum domínio grave predições fora do padrão que
+    # o monitoramento vai ler depois.
+    output: InferenceBatchStruct
     alias: str = "champion"
 
 

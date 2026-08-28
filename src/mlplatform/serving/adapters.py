@@ -8,6 +8,8 @@ from typing import Any
 
 import pandas as pd
 
+from .structure import MODEL_VERSION_COLUMN, SCORED_AT_COLUMN
+
 
 class FeatureEngineeringScorer:
     """Pontuação via Feature Engineering em Unity Catalog.
@@ -29,13 +31,20 @@ class FeatureEngineeringScorer:
     def to_pandas(self, df: Any) -> pd.DataFrame:
         return df.toPandas()
 
-    def score(self, model_uri: str, spine: Any) -> Any:
+    def score(self, model_uri: str, spine: Any, model_version: int) -> Any:
         import pyspark.sql.functions as F
         from databricks.feature_engineering import FeatureEngineeringClient
 
-        return FeatureEngineeringClient().score_batch(
-            model_uri=model_uri, df=spine, result_type="double"
-        ).withColumn("scored_at", F.current_timestamp())
+        # As duas colunas do framework nascem aqui, junto com a predição.
+        # `model_version` é o que separa "os scores mudaram porque os dados
+        # mudaram" de "os scores mudaram porque o modelo trocou" — sem ela, o
+        # monitoramento não consegue distinguir os dois.
+        return (
+            FeatureEngineeringClient()
+            .score_batch(model_uri=model_uri, df=spine, result_type="double")
+            .withColumn(SCORED_AT_COLUMN, F.current_timestamp())
+            .withColumn(MODEL_VERSION_COLUMN, F.lit(int(model_version)))
+        )
 
 
 class DeltaPredictionWriter:
