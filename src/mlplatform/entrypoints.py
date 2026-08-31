@@ -332,6 +332,10 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
     # Repositório da esteira do domínio, no formato owner/repo. Vazio desliga o
     # retreino automático: o componente só mede e registra.
     parser.add_argument("--retrain_repository", default="")
+    # Preenchido pelo job parameter, que carrega uma referência
+    # `{{secrets/escopo/chave}}` resolvida pelo Databricks. Cai para a variável
+    # de ambiente quando rodando fora de um job.
+    parser.add_argument("--github_token", default="")
     args = parser.parse_args(argv)
 
     _load(args)
@@ -348,11 +352,12 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
         flush=True,
     )
 
-    # O token vem do ambiente, não de parâmetro de job: parâmetro de job fica
-    # visível na UI e no histórico de execuções de quem tiver acesso ao job.
-    # No Databricks isso se resolve com um secret scope montado como variável de
-    # ambiente na task.
-    github_token = os.environ.get("GITHUB_TOKEN", "")
+    # O token chega por job parameter carregando `{{secrets/escopo/chave}}`,
+    # que o Databricks resolve e redige. Não é por variável de ambiente porque o
+    # serverless não tem onde declará-las: o spec do environment aceita apenas
+    # `client` e `dependencies`. O fallback para o ambiente serve a execuções
+    # fora de job.
+    github_token = args.github_token or os.environ.get("GITHUB_TOKEN", "")
     retrain = None
     if args.retrain_repository and github_token:
         retrain = GitHubRepositoryDispatch(args.retrain_repository, github_token)
@@ -488,6 +493,15 @@ def _training_parser(prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog)
     _common_args(parser)
     parser.add_argument("--model_name", required=True)
+    # Declarado nas TRÊS tasks, ainda que só a última o use: o Databricks
+    # injeta todo job parameter em cada python_wheel_task do job, e um
+    # argumento não declarado faz o argparse abortar com SystemExit(2) — sem
+    # nome de flag no erro, o que torna a causa difícil de ver no traceback.
+    #
+    #   ""      -> usa o alias que a config declarou
+    #   "none"  -> registra e NÃO promove (modo do retreino por drift)
+    #   outro   -> promove para esse alias
+    parser.add_argument("--promotion_alias", default="")
     return parser
 
 
@@ -523,18 +537,7 @@ def select_test_register(argv: list[str] | None = None) -> int:
     from .training.adapters import FeatureEngineeringPublisher
     from .training.usecases import SelectTestAndRegister
 
-    parser = _training_parser("mlp-select-test-register")
-    # Sobrescreve o alias declarado na config:
-    #   ""      -> usa o que o domínio declarou (execução agendada normal)
-    #   "none"  -> registra e NÃO promove
-    #   outro   -> promove para esse alias
-    # O modo "none" é o do retreino disparado por drift, em que a promoção fica
-    # atrás de uma aprovação humana no GitHub. Sentinela explícita em vez de
-    # vazio-significa-não-promover: o Databricks injeta job parameters não
-    # preenchidos como string vazia, e isso faria toda execução agendada parar
-    # de promover sem ninguém pedir.
-    parser.add_argument("--promotion_alias", default="")
-    args = parser.parse_args(argv)
+    args = _training_parser("mlp-select-test-register").parse_args(argv)
     _load(args)
     config, spark, deps = _training_context(args)
 

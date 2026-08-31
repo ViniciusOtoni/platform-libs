@@ -134,3 +134,45 @@ def test_the_platform_variables_are_always_declared():
 
     assert bundle["variables"]["reader_group"]["default"] == ""
     assert bundle["variables"]["retrain_repository"]["default"] == ""
+
+
+def test_the_token_secret_is_emitted_as_a_databricks_reference():
+    """O domínio declara `escopo/chave`; quem monta a sintaxe é o framework.
+
+    Pedir `{{secrets/...}}` escrito à mão em cada bundle convidaria ao erro de
+    colar o token direto ali — que é exatamente o que a referência existe para
+    evitar."""
+    from mlplatform.core.bundle import generate_bundle
+    from mlplatform.core.settings import BundleSettings
+
+    bundle = generate_bundle(
+        BundleSettings(
+            catalog="workspace",
+            domain_package="exemplo_x",
+            retrain_token_secret="mlplatform/github_token",
+        ),
+        domain="exemplo",
+        component="monitoring",
+        wheel_name="exemplo_x",
+    )
+
+    assert bundle["variables"]["retrain_token_secret"]["default"] == (
+        "{{secrets/mlplatform/github_token}}"
+    )
+
+
+def test_without_a_secret_the_reference_is_empty_not_malformed():
+    """Vazio desliga o retreino. Emitir `{{secrets/}}` faria o job falhar ao
+    resolver uma referência incompleta, em vez de simplesmente não pedir
+    retreino."""
+    from mlplatform.core.bundle import generate_bundle
+    from mlplatform.core.settings import BundleSettings
+
+    bundle = generate_bundle(
+        BundleSettings(catalog="workspace", domain_package="exemplo_x"),
+        domain="exemplo",
+        component="monitoring",
+        wheel_name="exemplo_x",
+    )
+
+    assert bundle["variables"]["retrain_token_secret"]["default"] == ""
