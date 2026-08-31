@@ -11,11 +11,26 @@ class ResourceGenerator(Protocol):
     def write(self, path: str) -> None: ...
 
 
+class _NoAliasDumper(yaml.SafeDumper):
+    """Repete o valor em vez de emitir ancora YAML.
+
+    Os geradores compartilham listas por referencia — a de job parameters e a
+    mesma para todos os jobs do componente —, e o dumper padrao transforma a
+    segunda ocorrencia em `*id001`. O DABs aceita, mas o YAML gerado e a
+    principal superficie de debug depois que os notebooks sairam: quem abre o
+    arquivo para entender o que a esteira montou encontra uma referencia em vez
+    do conteudo, e precisa resolve-la de cabeca.
+    """
+
+    def ignore_aliases(self, data) -> bool:
+        return True
+
+
 def dump_yaml(resource: dict, path: str) -> None:
     # allow_unicode: sem isso o safe_dump escapa acentos ("\xE1"), e o YAML
     # gerado é justamente o que alguém abre para entender o que a esteira montou.
     with open(path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(resource, f, sort_keys=False, allow_unicode=True)
+        yaml.dump(resource, f, Dumper=_NoAliasDumper, sort_keys=False, allow_unicode=True)
 
 
 ENVIRONMENT_KEY = "default"

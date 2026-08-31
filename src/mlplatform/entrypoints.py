@@ -138,6 +138,8 @@ def _domain_of(component: str) -> str:
         from .serving.contract import get_registry
     elif component == "training":
         from .training.contract import get_registry
+    elif component == "monitoring":
+        from .monitoring.contract import get_registry
     else:  # pragma: no cover
         raise ValueError(f"componente não suportado: {component}")
 
@@ -169,7 +171,7 @@ def generate_bundle(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mlp-generate-bundle")
     parser.add_argument(
         "--component",
-        choices=["features", "serving", "training"],
+        choices=["features", "serving", "training", "monitoring"],
         help="sobrescreve o componente declarado em conf/variables.yml",
     )
     parser.add_argument("--config", default=DEFAULT_PATH)
@@ -214,6 +216,10 @@ def generate_bundle(argv: list[str] | None = None) -> int:
             job_name=settings.job_name or "training_pipeline",
             domain_entry_point=settings.domain_package,
         )
+    elif component == "monitoring":
+        from .monitoring.resource_gen import write_resources as write_monitoring
+
+        write_monitoring(out, domain_entry_point=settings.domain_package)
     else:
         from .serving.adapters import SdkModelRegistry
         from .serving.contract import online_configs
@@ -300,6 +306,61 @@ def refresh_endpoint(argv: list[str] | None = None) -> int:
         config=config, catalog=args.catalog, endpoint_name=args.endpoint_name
     )
     print(f"[mlplatform] endpoint '{name}' reaponta para o alias '{config.alias}'", flush=True)
+    return 0
+
+
+def evaluate_drift(argv: list[str] | None = None) -> int:
+    from .core.adapters import DeltaAuditStore
+    from .monitoring.adapters import (
+        AuditTrainingRunReader,
+        DatabricksQualityMonitor,
+        DeltaDriftMetricsWriter,
+        DeltaTableReader,
+    )
+    from .monitoring.contract import get_monitoring_config
+    from .monitoring.usecases import EvaluateDrift
+
+    parser = argparse.ArgumentParser(prog="mlp-evaluate-drift")
+    _common_args(parser)
+    parser.add_argument("--model_name", required=True)
+    parser.add_argument("--target_type", required=True, choices=["feature_table", "predictions"])
+    args = parser.parse_args(argv)
+
+    _load(args)
+    # O domínio da config vem do registro, e não da flag: `--domain` carrega o
+    # nome do ENTRY POINT do pacote, que é outra coisa. Duas fontes para o mesmo
+    # fato acabariam discordando.
+    config = get_monitoring_config(_domain_of("monitoring"), args.model_name, args.target_type)
+    spark = _spark()
+
+    print(
+        f"[mlplatform] evaluate_drift model={args.model_name} domain={config.domain} "
+        f"target={config.target_table} type={config.target_type} "
+        f"columns={config.columns} threshold={config.threshold}",
+        flush=True,
+    )
+
+    results = EvaluateDrift(
+        runs=AuditTrainingRunReader(spark),
+        monitor=DatabricksQualityMonitor(spark),
+        reader=DeltaTableReader(spark),
+        writer=DeltaDriftMetricsWriter(spark),
+        audit=DeltaAuditStore(spark),
+        clock=SystemClock(),
+    ).execute(
+        config=config,
+        catalog=args.catalog,
+        run_id=_run_id(),
+        git_commit=args.git_commit,
+        git_branch=args.git_branch,
+    )
+
+    drifted = [r.column_name for r in results if r.status == "DRIFT_DETECTED"]
+    print(
+        f"[mlplatform] {len(results)} colunas avaliadas"
+        + (f", drift em {drifted}" if drifted else ", sem drift"),
+        flush=True,
+    )
     return 0
 
 
