@@ -5,6 +5,7 @@ Imports de infraestrutura ficam dentro dos métodos — ver a nota em
 """
 
 import time
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -57,6 +58,34 @@ class AuditTrainingRunReader:
         ]
 
 
+class DeltaBaselineBuilder:
+    """Recorta a tabela observada na janela de treino e grava a baseline."""
+
+    def __init__(self, spark, reader_group: str | None = None):
+        self._spark = spark
+        self._reader_group = reader_group
+
+    def materialise(
+        self,
+        source_table: str,
+        timestamp_column: str,
+        start: date,
+        end: date,
+        target_table: str,
+    ) -> int:
+        ensure_schema(self._spark, target_table.rsplit(".", 1)[0], self._reader_group)
+        # CREATE OR REPLACE, e não append: a baseline É a janela de treino do
+        # modelo vigente. Depois de um retreino ela precisa passar a ser a nova
+        # janela, senão o monitor continuaria comparando contra o que um modelo
+        # aposentado aprendeu.
+        self._spark.sql(
+            f"CREATE OR REPLACE TABLE {target_table} AS "
+            f"SELECT * FROM {source_table} "
+            f"WHERE {timestamp_column} >= DATE'{start}' AND {timestamp_column} <= DATE'{end}'"
+        )
+        return self._spark.table(target_table).count()
+
+
 class DatabricksQualityMonitor:
     """Cria (se preciso), atualiza e espera o monitor de qualidade.
 
@@ -71,14 +100,32 @@ class DatabricksQualityMonitor:
         # não concede — é o certo em workspace pessoal, onde não há grupo.
         self._reader_group = reader_group
 
-    def refreshed_drift_table(self, target_table: str, assets_dir: str, output_schema: str) -> str:
+    def refreshed_drift_table(
+        self,
+        target_table: str,
+        assets_dir: str,
+        output_schema: str,
+        baseline_table: str | None = None,
+    ) -> str:
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.catalog import MonitorSnapshot
 
         client = WorkspaceClient()
         monitor = self._existing(client, target_table)
 
-        if monitor is not None:
+        if monitor is not None and monitor.baseline_table_name != baseline_table:
+            # `create` é idempotente mas NÃO reconfigura. Sem este update, um
+            # monitor criado antes de a baseline existir seguiria emitindo só
+            # linhas CONSECUTIVE — e o caso de uso, esperando linhas BASELINE,
+            # não acharia medição nenhuma.
+            monitor = client.quality_monitors.update(
+                table_name=target_table,
+                output_schema_name=output_schema,
+                baseline_table_name=baseline_table,
+                snapshot=MonitorSnapshot(),
+            )
+            refresh = client.quality_monitors.run_refresh(table_name=target_table)
+        elif monitor is not None:
             refresh = client.quality_monitors.run_refresh(table_name=target_table)
         else:
             # saveAsTable não cria o schema em Unity Catalog, e o monitor grava
@@ -88,6 +135,7 @@ class DatabricksQualityMonitor:
                 table_name=target_table,
                 assets_dir=assets_dir,
                 output_schema_name=output_schema,
+                baseline_table_name=baseline_table,
                 snapshot=MonitorSnapshot(),
             )
             # `create` já dispara um refresh, mas não devolve qual: pegamos o

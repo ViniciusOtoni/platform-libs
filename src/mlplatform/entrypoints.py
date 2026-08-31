@@ -318,6 +318,7 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
     from .monitoring.adapters import (
         AuditTrainingRunReader,
         DatabricksQualityMonitor,
+        DeltaBaselineBuilder,
         DeltaDriftMetricsWriter,
         DeltaTableReader,
         GitHubRepositoryDispatch,
@@ -370,6 +371,8 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
 
     results = EvaluateDrift(
         retrain=retrain,
+        # Só é usado quando a config declara `baseline_timestamp_column`.
+        baseline=DeltaBaselineBuilder(spark, args.reader_group),
         runs=AuditTrainingRunReader(spark),
         monitor=DatabricksQualityMonitor(spark, args.reader_group),
         reader=DeltaTableReader(spark),

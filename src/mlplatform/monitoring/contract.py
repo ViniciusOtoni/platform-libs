@@ -20,6 +20,15 @@ class MonitoringConfig:
     # categóricas; as demais vêm nulas fora do tipo delas, e uma métrica nula
     # produz "sem drift" para sempre.
     drift_metric: str = DEFAULT_DRIFT_METRIC
+    # Coluna de tempo da tabela observada. Quando declarada, o monitor passa a
+    # comparar contra a JANELA DE TREINO em vez de contra a janela anterior: o
+    # framework materializa uma fatia da própria tabela nessa janela e a usa
+    # como baseline.
+    #
+    # Opcional porque nem todo alvo tem baseline possível. A tabela de predições
+    # não tem: não existem predições do período de treino — o modelo ainda não
+    # existia. Para ela, comparar com a janela anterior é o que faz sentido.
+    baseline_timestamp_column: str | None = None
 
     def __post_init__(self) -> None:
         metric = resolve(self.drift_metric)
