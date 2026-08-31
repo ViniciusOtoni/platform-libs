@@ -52,4 +52,10 @@ class OnlineStore(Protocol):
     """Sincronização com o Online Feature Store (Lakebase). Só exercitado por
     feature tables declaradas com `online=True`."""
 
-    def sync(self, table_name: str, primary_keys: list[str], database_instance_name: str) -> None: ...
+    def sync(
+        self,
+        table_name: str,
+        primary_keys: list[str],
+        database_instance_name: str,
+        timeseries_key: str | None = None,
+    ) -> None: ...
