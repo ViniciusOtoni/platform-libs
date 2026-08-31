@@ -14,6 +14,8 @@ from typing import Any
 
 import pandas as pd
 
+from mlplatform.core.uc import ensure_schema
+
 from .modes import WriteMode, WriteSemantics, write_strategy_for
 
 
@@ -29,8 +31,11 @@ class SparkSourceReader:
 
 
 class DeltaFeatureWriter:
-    def __init__(self, spark):
+    def __init__(self, spark, reader_group: str | None = None):
         self._spark = spark
+        # Grupo do domínio que recebe leitura nos schemas criados aqui. `None`
+        # não concede — é o certo em workspace pessoal, onde não há grupo.
+        self._reader_group = reader_group
 
     def write(
         self,
@@ -45,7 +50,7 @@ class DeltaFeatureWriter:
         # saveAsTable não cria o schema em Unity Catalog — sem isso, a primeira
         # escrita de um domínio novo falha com SCHEMA_NOT_FOUND.
         catalog, schema, _table = table_name.split(".")
-        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
+        ensure_schema(self._spark, f"{catalog}.{schema}", self._reader_group)
 
         if write_strategy_for(mode) is WriteSemantics.MERGE:
             self._merge(df, table_name, entity_keys, timestamp_key)

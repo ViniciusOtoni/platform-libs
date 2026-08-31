@@ -314,3 +314,16 @@ def test_promotion_can_be_turned_off():
 
     assert publisher.published  # registrou
     assert publisher.promotions == []  # mas não promoveu
+
+
+def test_the_promotion_override_can_hold_a_candidate_back():
+    """`--promotion_alias none` registra sem promover. É o modo do retreino
+    disparado por drift: o candidato existe, e quem decide se ele serve é uma
+    pessoa, no GitHub Environment."""
+    from mlplatform.entrypoints import _with_promotion_override
+
+    config = _config()
+
+    assert _with_promotion_override(config, "").promotion_alias == "champion"
+    assert _with_promotion_override(config, "none").promotion_alias is None
+    assert _with_promotion_override(config, "challenger").promotion_alias == "challenger"

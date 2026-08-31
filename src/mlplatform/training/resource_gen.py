@@ -31,6 +31,13 @@ _JOB_PARAMETERS = [
     {"name": "catalog", "default": "${var.catalog}"},
     {"name": "git_commit", "default": "${var.git_commit}"},
     {"name": "git_branch", "default": "${var.git_branch}"},
+    # Vazio quando o domínio não declara grupo — os adapters não concedem nada
+    # nesse caso, que é o correto em workspace pessoal.
+    {"name": "reader_group", "default": "${var.reader_group}"},
+    # Vazio = usa o alias da config. A esteira de retreino por drift passa
+    # "none" no run-now, para o candidato ficar registrado sem promover até
+    # alguém aprovar no GitHub.
+    {"name": "promotion_alias", "default": ""},
 ]
 
 

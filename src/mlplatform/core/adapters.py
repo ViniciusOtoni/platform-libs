@@ -10,6 +10,7 @@ teste, porque nenhum teste roda dentro daquele container.
 from datetime import date
 
 from .audit import AUDIT_TABLE, RunRecord, to_row
+from .uc import ensure_schema
 
 
 class DeltaAuditStore:
@@ -22,8 +23,9 @@ class DeltaAuditStore:
     def append(self, record: RunRecord) -> None:
         # saveAsTable não cria o schema em Unity Catalog — sem isso a primeira
         # escrita falha com SCHEMA_NOT_FOUND.
-        schema = self._table.rsplit(".", 1)[0]
-        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        # `platform_audit` é da plataforma: recebe escrita de todos os
+        # domínios e não é concedida a nenhum.
+        ensure_schema(self._spark, self._table.rsplit(".", 1)[0])
         df = self._spark.createDataFrame([to_row(record)])
         mode = "append" if self._spark.catalog.tableExists(self._table) else "overwrite"
         df.write.format("delta").mode(mode).saveAsTable(self._table)

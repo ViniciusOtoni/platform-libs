@@ -12,7 +12,11 @@ import pytest
 from mlplatform.monitoring.baseline import NoTrainingRunError, TrainingRun
 from mlplatform.monitoring.central_table import DRIFT_METRICS_TABLE
 from mlplatform.monitoring.contract import MonitoringConfig
-from mlplatform.monitoring.usecases import EvaluateDrift
+from mlplatform.monitoring.usecases import (
+    DriftMetricUnavailable,
+    EvaluateDrift,
+    NoColumnMeasured,
+)
 from mlplatform.testing import (
     FakeDriftMetricsWriter,
     FakeQualityMonitor,
@@ -25,6 +29,9 @@ from mlplatform.testing import (
 INSTANT = datetime(2026, 8, 30, 7, 0, 0, tzinfo=UTC)
 DRIFT_TABLE = "workspace.exemplo_monitoring.drift"
 MODEL = "workspace.exemplo_models.propensao_exemplo"
+
+JANELA_NOVA = {"start": "2026-08-30", "end": "2026-08-31"}
+JANELA_VELHA = {"start": "2026-08-28", "end": "2026-08-29"}
 
 
 def _config(**o) -> MonitoringConfig:
@@ -53,10 +60,27 @@ def _training_run(status: str = "SUCCESS") -> TrainingRun:
 
 
 def _metrics(**o) -> pd.DataFrame:
+    """Reproduz a tabela de drift que o Lakehouse Monitoring gera de verdade.
+
+    O fixture antigo tinha uma coluna `statistic`, que NÃO existe: no topo da
+    tabela as métricas se chamam `population_stability_index`, `js_distance`,
+    `wasserstein_distance` e afins. `statistic` é um campo ANINHADO dentro dos
+    structs `ks_test` e `chi_squared_test` — era daí que vinha a confusão.
+
+    Foi o fixture confortável que deixou o bug passar: o código lia `statistic`,
+    não achava, e registrava 0.0 em toda medição.
+
+    `js_distance` vem nula aqui de propósito: o monitor só a calcula para
+    colunas categóricas, e estas são numéricas.
+    """
     base = {
         "column_name": ["txn_count", "avg_ticket"],
-        "drift_type": ["JENSEN_SHANNON", "JENSEN_SHANNON"],
-        "statistic": [0.05, 0.05],
+        "drift_type": ["CONSECUTIVE", "CONSECUTIVE"],
+        "slice_key": [None, None],
+        "window": [JANELA_NOVA, JANELA_NOVA],
+        "population_stability_index": [0.05, 0.05],
+        "js_distance": [None, None],
+        "ks_test": [{"statistic": 0.05, "pvalue": 0.9}] * 2,
     }
     base.update(o)
     return pd.DataFrame(base)
@@ -90,10 +114,11 @@ def test_a_metric_under_the_threshold_passes():
     results, _, _, _ = _run()
 
     assert {r.status for r in results} == {"PASS"}
+    assert {r.drift_metric_name for r in results} == {"population_stability_index"}
 
 
 def test_a_metric_over_the_threshold_is_flagged():
-    results, _, _, _ = _run(metrics=_metrics(statistic=[0.35, 0.05]))
+    results, _, _, _ = _run(metrics=_metrics(population_stability_index=[0.35, 0.05]))
 
     flagged = {r.column_name for r in results if r.status == "DRIFT_DETECTED"}
     assert flagged == {"txn_count"}
@@ -115,19 +140,106 @@ def test_a_column_without_measurement_is_skipped_not_failed():
     assert [r.column_name for r in results] == ["txn_count"]
 
 
-def test_the_most_recent_measurement_wins():
-    """A tabela acumula uma linha por refresh; drift é sobre a medição atual."""
+def test_a_struct_metric_is_read_from_its_nested_field():
+    """`ks_test` e `chi_squared_test` são structs com `statistic` e `pvalue`."""
+    results, _, _, _ = _run(config=_config(drift_metric="ks_test"))
+
+    assert {r.drift_metric_name for r in results} == {"ks_test"}
+    assert results[0].drift_metric_value == 0.05
+
+
+# -- de que linha o veredito sai ---------------------------------------------
+
+
+def test_the_most_recent_window_wins_regardless_of_row_order():
+    """A tabela acumula uma linha por refresh, e a ordem física não é garantida.
+    Pegar a última linha faria o veredito depender de como o Delta as devolveu."""
     metrics = pd.DataFrame(
         {
             "column_name": ["txn_count", "txn_count"],
-            "drift_type": ["JENSEN_SHANNON", "JENSEN_SHANNON"],
-            "statistic": [0.9, 0.01],
+            "drift_type": ["CONSECUTIVE", "CONSECUTIVE"],
+            "slice_key": [None, None],
+            # a janela mais recente vem PRIMEIRO de propósito
+            "window": [JANELA_NOVA, JANELA_VELHA],
+            "population_stability_index": [0.01, 0.9],
         }
     )
     results, _, _, _ = _run(metrics=metrics, config=_config(columns=["txn_count"]))
 
     assert results[0].drift_metric_value == 0.01
-    assert results[0].status == "PASS"
+
+
+def test_sliced_rows_do_not_decide_the_verdict():
+    """O monitor emite uma linha por fatia quando `slicing_exprs` existe. Ler
+    tudo junto deixaria uma fatia decidir pelo total."""
+    metrics = pd.DataFrame(
+        {
+            "column_name": ["txn_count", "txn_count"],
+            "drift_type": ["CONSECUTIVE", "CONSECUTIVE"],
+            "slice_key": [None, "regiao"],
+            "window": [JANELA_NOVA, JANELA_NOVA],
+            "population_stability_index": [0.01, 0.9],
+        }
+    )
+    results, _, _, _ = _run(metrics=metrics, config=_config(columns=["txn_count"]))
+
+    assert results[0].drift_metric_value == 0.01
+
+
+def test_the_baseline_comparison_does_not_mix_with_the_consecutive_one():
+    """Se um dia `baseline_table_name` for configurado, os dois tipos de
+    comparação convivem na mesma tabela."""
+    metrics = pd.DataFrame(
+        {
+            "column_name": ["txn_count", "txn_count"],
+            "drift_type": ["CONSECUTIVE", "BASELINE"],
+            "slice_key": [None, None],
+            "window": [JANELA_NOVA, JANELA_NOVA],
+            "population_stability_index": [0.01, 0.9],
+        }
+    )
+    results, _, _, _ = _run(metrics=metrics, config=_config(columns=["txn_count"]))
+
+    assert results[0].drift_metric_value == 0.01
+
+
+# -- o que antes falhava em silêncio ----------------------------------------
+
+
+def test_a_metric_column_that_does_not_exist_fails_loudly():
+    """O bug original: `.get(coluna, 0.0)` sobre coluna inexistente registrava
+    zero em toda medição, e o gate nunca podia disparar."""
+    writer, audit = FakeDriftMetricsWriter(), InMemoryAuditStore()
+    metrics = _metrics().drop(columns=["population_stability_index"])
+
+    with pytest.raises(DriftMetricUnavailable, match="population_stability_index"):
+        _run(metrics=metrics, writer=writer, audit=audit)
+
+    assert writer.written == []
+    assert audit.statuses() == ["FAILED"]
+
+
+def test_a_metric_null_for_every_column_fails_loudly():
+    """`js_distance` vem nula em colunas numéricas. Sem esta checagem, escolher
+    a métrica errada para o tipo de dado produziria "sem drift" para sempre."""
+    writer, audit = FakeDriftMetricsWriter(), InMemoryAuditStore()
+
+    with pytest.raises(NoColumnMeasured, match="js_distance"):
+        _run(config=_config(drift_metric="js_distance"), writer=writer, audit=audit)
+
+    assert writer.written == []
+    assert audit.statuses() == ["FAILED"]
+
+
+def test_when_no_declared_column_is_measured_it_audits_and_stops():
+    """Uma coluna sem medição é normal; TODAS sem medição é erro de
+    configuração — nomes que não existem na tabela observada."""
+    writer, audit = FakeDriftMetricsWriter(), InMemoryAuditStore()
+
+    with pytest.raises(NoColumnMeasured):
+        _run(metrics=_metrics(column_name=["outra", "mais_outra"]), writer=writer, audit=audit)
+
+    assert audit.statuses() == ["FAILED"]
 
 
 # -- escrita e auditoria ----------------------------------------------------
@@ -140,15 +252,6 @@ def test_the_measurements_land_in_the_central_table():
     assert table == DRIFT_METRICS_TABLE
     assert {r["column_name"] for r in rows} == {"txn_count", "avg_ticket"}
     assert {r["entity_name"] for r in rows} == {_config().target_table}
-
-
-def test_nothing_is_written_when_there_is_nothing_to_measure():
-    """Gravar zero linha criaria uma escrita vazia por execução, e o histórico
-    passaria a sugerir medições que não aconteceram."""
-    _, writer, audit, _ = _run(metrics=_metrics(column_name=["outra", "mais_outra"]))
-
-    assert writer.written == []
-    assert audit.statuses() == ["SUCCESS"]
 
 
 def test_the_monitor_is_scoped_to_the_domain_and_target():
@@ -189,3 +292,75 @@ def test_a_training_run_of_another_model_does_not_count():
         _run(runs=[outro], writer=writer, audit=audit)
 
     assert audit.statuses() == ["FAILED"]
+
+
+# -- retreino disparado por drift -------------------------------------------
+
+
+def test_no_drift_asks_for_no_retrain():
+    from mlplatform.testing import FakeRetrainTrigger
+
+    trigger = FakeRetrainTrigger()
+    EvaluateDrift(
+        runs=FakeTrainingRunReader([_training_run()]),
+        monitor=FakeQualityMonitor(drift_table=DRIFT_TABLE),
+        reader=FakeTableReader({DRIFT_TABLE: _metrics()}),
+        writer=FakeDriftMetricsWriter(),
+        audit=InMemoryAuditStore(),
+        clock=FixedClock(INSTANT),
+        retrain=trigger,
+    ).execute(config=_config(), catalog="workspace", run_id="r", git_commit="a", git_branch="main")
+
+    assert trigger.requests == []
+
+
+def test_drift_asks_for_a_retrain_naming_the_columns():
+    """O payload carrega quais colunas driftaram: quem for revisar o modelo
+    retreinado precisa saber o que mudou para julgar se ele faz sentido."""
+    from mlplatform.testing import FakeRetrainTrigger
+
+    trigger = FakeRetrainTrigger()
+    EvaluateDrift(
+        runs=FakeTrainingRunReader([_training_run()]),
+        monitor=FakeQualityMonitor(drift_table=DRIFT_TABLE),
+        reader=FakeTableReader({DRIFT_TABLE: _metrics(population_stability_index=[0.9, 0.05])}),
+        writer=FakeDriftMetricsWriter(),
+        audit=InMemoryAuditStore(),
+        clock=FixedClock(INSTANT),
+        retrain=trigger,
+    ).execute(config=_config(), catalog="workspace", run_id="r", git_commit="a", git_branch="main")
+
+    assert trigger.requests == [("exemplo", "propensao_exemplo", ["txn_count"])]
+
+
+def test_the_measurement_survives_a_trigger_failure():
+    """A medição é o produto do job e não pode se perder porque o GitHub estava
+    fora do ar — mas o job não pode reportar sucesso, senão alguém veria
+    DRIFT_DETECTED na tabela e assumiria que a esteira reagiu."""
+    from mlplatform.testing import FakeRetrainTrigger
+
+    writer, audit = FakeDriftMetricsWriter(), InMemoryAuditStore()
+
+    with pytest.raises(RuntimeError):
+        EvaluateDrift(
+            runs=FakeTrainingRunReader([_training_run()]),
+            monitor=FakeQualityMonitor(drift_table=DRIFT_TABLE),
+            reader=FakeTableReader({DRIFT_TABLE: _metrics(population_stability_index=[0.9, 0.9])}),
+            writer=writer,
+            audit=audit,
+            clock=FixedClock(INSTANT),
+            retrain=FakeRetrainTrigger(fails=True),
+        ).execute(
+            config=_config(), catalog="workspace", run_id="r", git_commit="a", git_branch="main"
+        )
+
+    assert writer.written, "as métricas medidas foram gravadas"
+    assert audit.statuses() == ["FAILED"], "mas o job não reporta sucesso"
+
+
+def test_without_a_trigger_it_only_measures():
+    """Quem ainda não quer retreino automático usa o componente sem gatilho."""
+    results, _, audit, _ = _run(metrics=_metrics(population_stability_index=[0.9, 0.9]))
+
+    assert {r.status for r in results} == {"DRIFT_DETECTED"}
+    assert audit.statuses() == ["SUCCESS"]

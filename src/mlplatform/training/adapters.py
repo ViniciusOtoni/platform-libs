@@ -4,6 +4,8 @@ from typing import Any
 
 import pandas as pd
 
+from mlplatform.core.uc import ensure_schema
+
 
 class FeatureEngineeringTrainingSet:
     def __init__(self, spark):
@@ -41,8 +43,9 @@ class DeltaScratchStore:
         self._spark = spark
 
     def write(self, df: pd.DataFrame, table_name: str) -> None:
-        schema = table_name.rsplit(".", 1)[0]
-        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        # `training_scratch` é área da plataforma, compartilhada entre
+        # domínios: não recebe grant do grupo de nenhum deles.
+        ensure_schema(self._spark, table_name.rsplit(".", 1)[0])
         # overwriteSchema: sem ele o Delta preserva o schema da tabela que já
         # existe e só troca os dados, falhando com DELTA_FAILED_TO_MERGE_FIELDS
         # quando o formato muda. E ele muda por motivos rotineiros: o domínio
@@ -213,8 +216,11 @@ def serving_pip_requirements() -> list[str]:
 class FeatureEngineeringPublisher:
     """Registra o modelo no Unity Catalog com a linhagem de features embutida."""
 
-    def __init__(self, spark):
+    def __init__(self, spark, reader_group: str | None = None):
         self._spark = spark
+        # Grupo do domínio que recebe leitura nos schemas criados aqui. `None`
+        # não concede — é o certo em workspace pessoal, onde não há grupo.
+        self._reader_group = reader_group
 
     def publish(
         self,
@@ -229,7 +235,7 @@ class FeatureEngineeringPublisher:
         from databricks.feature_engineering import FeatureEngineeringClient
 
         mlflow.set_registry_uri("databricks-uc")
-        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {full_model_name.rsplit('.', 1)[0]}")
+        ensure_schema(self._spark, full_model_name.rsplit(".", 1)[0], self._reader_group)
 
         # code_paths leva só o esqueleto de pacotes da classe pyfunc — ver
         # `pyfunc_code_path`. Empacotar o framework todo levaria os adapters

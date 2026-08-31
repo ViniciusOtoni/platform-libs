@@ -40,6 +40,7 @@ def test_generate_job_resource_declares_job_parameters():
         "git_branch",
         "catalog",
         "database_instance_name",
+        "reader_group",
     }
 
 

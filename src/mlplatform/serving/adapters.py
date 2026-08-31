@@ -8,6 +8,8 @@ from typing import Any
 
 import pandas as pd
 
+from mlplatform.core.uc import ensure_schema
+
 from .structure import MODEL_VERSION_COLUMN, SCORED_AT_COLUMN
 
 
@@ -48,13 +50,15 @@ class FeatureEngineeringScorer:
 
 
 class DeltaPredictionWriter:
-    def __init__(self, spark):
+    def __init__(self, spark, reader_group: str | None = None):
         self._spark = spark
+        # Grupo do domínio que recebe leitura nos schemas criados aqui. `None`
+        # não concede — é o certo em workspace pessoal, onde não há grupo.
+        self._reader_group = reader_group
 
     def append(self, df: Any, table_name: str) -> None:
         # saveAsTable não cria o schema em Unity Catalog.
-        schema = table_name.rsplit(".", 1)[0]
-        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        ensure_schema(self._spark, table_name.rsplit(".", 1)[0], self._reader_group)
 
         # mergeSchema porque o conjunto de colunas CRESCE por motivos rotineiros:
         # o domínio adiciona uma feature ao FeatureLookup, ou o framework passa a

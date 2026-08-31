@@ -52,6 +52,12 @@ def _jobs(**kwargs) -> dict:
     return generate_job_resource(environment_dependencies=[], **kwargs)["resources"]["jobs"]
 
 
+# Parâmetros cujo default vazio é a resposta certa, e não uma lacuna: vazio
+# significa "use o que a config declarou". Todo o resto precisa vir preenchido,
+# porque o entrypoint os exige.
+_OPTIONAL_JOB_PARAMETERS = {"promotion_alias"}
+
+
 def test_no_parameter_is_left_for_the_user_to_fill_in():
     """`model_name` era um job parameter com default vazio, e os entrypoints o
     exigem. Qualquer execução agendada — ou um clique em Run now — morria com
@@ -60,8 +66,21 @@ def test_no_parameter_is_left_for_the_user_to_fill_in():
 
     job = _jobs()["training_pipeline"]
 
-    assert all(p["default"] for p in job["parameters"])
+    obrigatorios = [p for p in job["parameters"] if p["name"] not in _OPTIONAL_JOB_PARAMETERS]
+    assert all(p["default"] for p in obrigatorios)
     assert "model_name" not in {p["name"] for p in job["parameters"]}
+
+
+def test_the_promotion_alias_can_be_overridden_at_run_time():
+    """A esteira de retreino por drift precisa treinar SEM promover: o candidato
+    fica registrado e a promoção espera aprovação humana no GitHub. Sem este
+    parâmetro, o único jeito seria mudar a config do domínio e redeployar."""
+    register_training_config(_config())
+
+    job = _jobs()["training_pipeline"]
+    promotion = next(p for p in job["parameters"] if p["name"] == "promotion_alias")
+
+    assert promotion["default"] == "", "vazio = usa o alias da config"
 
 
 def test_every_task_carries_the_model_name():

@@ -305,3 +305,17 @@ class FakeDriftMetricsWriter:
 
     def append(self, rows: list[dict], table_name: str) -> None:
         self.written.append((table_name, rows))
+
+
+class FakeRetrainTrigger:
+    """Registra os pedidos de retreino, sem falar com o GitHub."""
+
+    def __init__(self, fails: bool = False):
+        self._fails = fails
+        self.requests: list[tuple[str, str, list[str]]] = []
+
+    def request_retrain(self, domain: str, model_name: str, drifted_columns: list[str]) -> str:
+        self.requests.append((domain, model_name, list(drifted_columns)))
+        if self._fails:
+            raise RuntimeError("repository_dispatch indisponível")
+        return f"{domain}/{model_name}"

@@ -60,3 +60,77 @@ def test_every_variable_carries_a_description():
     variables = _bundle(database_instance_name="lakebase-1")["variables"]
 
     assert all(v["description"] for v in variables.values())
+
+
+def test_the_domain_group_can_run_but_not_edit_the_resources():
+    """A definição do job vem do git. Poder editar pela UI criaria divergência
+    silenciosa com o versionado, e o próximo deploy sobrescreveria a edição.
+
+    O nível também precisa ser um que o DABs aceite: `CAN_MANAGE_RUN` existe na
+    API de jobs mas não no bundle, e o `bundle validate` reprova."""
+    from mlplatform.core.bundle import generate_bundle
+    from mlplatform.core.settings import BundleSettings
+
+    bundle = generate_bundle(
+        BundleSettings(catalog="workspace", domain_package="exemplo_x", reader_group="time-exemplo"),
+        domain="exemplo",
+        component="training",
+        wheel_name="exemplo_x",
+    )
+
+    assert bundle["permissions"] == [
+        {"user_name": "${workspace.current_user.userName}", "level": "CAN_MANAGE"},
+        {"group_name": "time-exemplo", "level": "CAN_RUN"},
+    ]
+
+
+def test_the_deploying_identity_is_named_explicitly():
+    """O `bundle validate` avisa quando a identidade do deploy não está no
+    bloco: CAN_MANAGE só se aplica se o deploy sair dela. Em CI ele sai de um
+    service principal, não de quem escreveu o bundle."""
+    from mlplatform.core.bundle import generate_bundle
+    from mlplatform.core.settings import BundleSettings
+
+    bundle = generate_bundle(
+        BundleSettings(catalog="workspace", domain_package="exemplo_x", reader_group="time-exemplo"),
+        domain="exemplo",
+        component="training",
+        wheel_name="exemplo_x",
+    )
+
+    manage = [p for p in bundle["permissions"] if p["level"] == "CAN_MANAGE"]
+    assert manage == [{"user_name": "${workspace.current_user.userName}", "level": "CAN_MANAGE"}]
+
+
+def test_without_a_group_no_permission_block_is_emitted():
+    """Workspace pessoal não tem grupo, e um bloco vazio faria o validate
+    reclamar."""
+    from mlplatform.core.bundle import generate_bundle
+    from mlplatform.core.settings import BundleSettings
+
+    bundle = generate_bundle(
+        BundleSettings(catalog="workspace", domain_package="exemplo_x"),
+        domain="exemplo",
+        component="training",
+        wheel_name="exemplo_x",
+    )
+
+    assert "permissions" not in bundle
+
+
+def test_the_platform_variables_are_always_declared():
+    """Os jobs referenciam `${var.reader_group}` e `${var.retrain_repository}`
+    nos parâmetros. Referência a variável não declarada faz o `bundle validate`
+    falhar, mesmo quando o domínio não usa o recurso."""
+    from mlplatform.core.bundle import generate_bundle
+    from mlplatform.core.settings import BundleSettings
+
+    bundle = generate_bundle(
+        BundleSettings(catalog="workspace", domain_package="exemplo_x"),
+        domain="exemplo",
+        component="training",
+        wheel_name="exemplo_x",
+    )
+
+    assert bundle["variables"]["reader_group"]["default"] == ""
+    assert bundle["variables"]["retrain_repository"]["default"] == ""
