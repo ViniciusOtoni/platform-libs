@@ -126,17 +126,39 @@ class DeltaFeatureWriter:
         )
 
 
-def build_synced_table_spec(table_name: str, primary_keys: list[str]) -> dict:
-    """Separado do adapter para ser testável sem SDK nem rede."""
-    return {
+def build_synced_table_spec(
+    table_name: str, primary_keys: list[str], timeseries_key: str | None = None
+) -> dict:
+    """Separado do adapter para ser testável sem SDK nem rede.
+
+    `timeseries_key` é o que torna a synced table uma feature table temporal
+    tambem do lado online. Sem ele, a chave primaria e so a entidade — e uma
+    tabela com 24 safras tem 24 linhas por cliente. O Model Serving falha ao
+    montar o lookup com "Failure to retrieve online store metadata", porque a
+    linhagem do modelo tem `timestamp_lookup_key` e o online store nao.
+
+    Com uma safra so o problema nao aparece: uma linha por cliente resolve
+    igual, com ou sem chave temporal. Foi por isso que passou despercebido ate
+    existir um dominio com historico de verdade.
+    """
+    spec = {
         "source_table_full_name": table_name,
         "primary_key_columns": primary_keys,
         "scheduling_policy": "TRIGGERED",
     }
+    if timeseries_key:
+        spec["timeseries_key"] = timeseries_key
+    return spec
 
 
 class LakebaseOnlineStore:
-    def sync(self, table_name: str, primary_keys: list[str], database_instance_name: str) -> None:
+    def sync(
+        self,
+        table_name: str,
+        primary_keys: list[str],
+        database_instance_name: str,
+        timeseries_key: str | None = None,
+    ) -> None:
         """Cria ou sincroniza a synced table no Lakebase.
 
         `logical_database_name` não é parâmetro livre: é sempre o catalog da
@@ -155,7 +177,7 @@ class LakebaseOnlineStore:
         if not database_instance_name:
             raise ValueError("sync requires a non-empty database_instance_name")
 
-        spec_fields = build_synced_table_spec(table_name, primary_keys)
+        spec_fields = build_synced_table_spec(table_name, primary_keys, timeseries_key)
         # build_synced_table_spec devolve scheduling_policy como string pura para
         # ficar testável sem SDK; SyncedTableSpec exige o enum — passar a string
         # quebra com AttributeError dentro do as_dict() do próprio SDK.

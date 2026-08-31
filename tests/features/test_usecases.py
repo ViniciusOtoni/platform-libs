@@ -174,7 +174,24 @@ def test_online_table_syncs_and_enables_cdf():
     _execute(_usecase(online=online, writer=writer), spec=_spec(online=True), database_instance_name="lakebase-1")
 
     assert writer.writes[0]["enable_cdf"] is True
-    assert online.syncs == [("workspace.exemplo_features.minha_feature", ["customer_id"], "lakebase-1")]
+    assert online.syncs[0]["table_name"] == "workspace.exemplo_features.minha_feature"
+    assert online.syncs[0]["primary_keys"] == ["customer_id"]
+    assert online.syncs[0]["database_instance_name"] == "lakebase-1"
+
+
+def test_the_online_table_declares_the_timeseries_key():
+    """Sem a chave temporal, a chave primaria online e so a entidade — e uma
+    feature table com 24 safras tem 24 linhas por cliente. O Model Serving
+    falha ao montar o lookup com "Failure to retrieve online store metadata",
+    porque a linhagem do modelo tem `timestamp_lookup_key` e o online store nao.
+
+    Com uma safra so o problema nao aparece: uma linha por cliente resolve
+    igual. Passou despercebido ate existir um dominio com historico de verdade."""
+    online, writer = FakeOnlineStore(), FakeFeatureWriter()
+
+    _execute(_usecase(online=online, writer=writer), spec=_spec(online=True), database_instance_name="lakebase-1")
+
+    assert online.syncs[0]["timeseries_key"] == "feature_ts"
 
 
 def test_offline_table_does_not_sync():

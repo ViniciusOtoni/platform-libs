@@ -92,7 +92,9 @@ class RunFeatureTable:
                 raise ValueError(
                     f"feature table '{spec.name}' is declared online=True but no OnlineStore was provided"
                 )
-            self._online.sync(table_name, spec.entity_keys, database_instance_name)
+            self._online.sync(
+                table_name, spec.entity_keys, database_instance_name, spec.timestamp_key
+            )
 
     def _resolve_window(
         self,

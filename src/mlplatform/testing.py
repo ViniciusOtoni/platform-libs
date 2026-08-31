@@ -87,10 +87,23 @@ class FakeFeatureWriter:
 
 class FakeOnlineStore:
     def __init__(self) -> None:
-        self.syncs: list[tuple[str, list[str], str]] = []
+        self.syncs: list[dict] = []
 
-    def sync(self, table_name: str, primary_keys: list[str], database_instance_name: str) -> None:
-        self.syncs.append((table_name, primary_keys, database_instance_name))
+    def sync(
+        self,
+        table_name: str,
+        primary_keys: list[str],
+        database_instance_name: str,
+        timeseries_key: str | None = None,
+    ) -> None:
+        self.syncs.append(
+            {
+                "table_name": table_name,
+                "primary_keys": primary_keys,
+                "database_instance_name": database_instance_name,
+                "timeseries_key": timeseries_key,
+            }
+        )
 
 
 class FixedClock:

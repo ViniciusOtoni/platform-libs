@@ -138,14 +138,41 @@ class DatabricksQualityMonitor:
                 baseline_table_name=baseline_table,
                 snapshot=MonitorSnapshot(),
             )
-            # `create` já dispara um refresh, mas não devolve qual: pegamos o
+            # Um monitor recem-criado fica MONITOR_STATUS_PENDING, e listar
+            # refreshes nesse estado e recusado com BadRequest. Com um monitor
+            # que ja existia o caminho nem passa por aqui — foi por isso que so
+            # apareceu ao criar o primeiro monitor de um dominio novo.
+            self._esperar_ativo(client, target_table)
+            # `create` ja dispara um refresh, mas nao devolve qual: pegamos o
             # mais recente em vez de disparar um segundo, que ficaria enfileirado
-            # atrás do primeiro e dobraria a espera.
+            # atras do primeiro e dobraria a espera.
             refreshes = client.quality_monitors.list_refreshes(table_name=target_table).refreshes
             refresh = max(refreshes, key=lambda r: r.start_time_ms)
 
         self._wait(client, target_table, refresh)
         return monitor.drift_metrics_table_name
+
+    @staticmethod
+    def _esperar_ativo(client, target_table: str) -> None:
+        """Espera o monitor sair de PENDING.
+
+        Recem-criado, ele nao aceita `list_refreshes` — a API responde
+        BadRequest em vez de uma lista vazia, entao nao da para tratar como
+        "ainda nao ha refresh".
+        """
+        from databricks.sdk.service.catalog import MonitorInfoStatus
+
+        limite = time.time() + REFRESH_TIMEOUT_SECONDS
+        while True:
+            info = client.quality_monitors.get(table_name=target_table)
+            if info.status != MonitorInfoStatus.MONITOR_STATUS_PENDING:
+                return
+            if time.time() > limite:
+                raise TimeoutError(
+                    f"monitor de '{target_table}' seguiu PENDING por "
+                    f"{REFRESH_TIMEOUT_SECONDS}s apos a criacao"
+                )
+            time.sleep(REFRESH_POLL_SECONDS)
 
     @staticmethod
     def _existing(client, target_table: str) -> Any:
