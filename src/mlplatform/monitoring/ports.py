@@ -5,6 +5,7 @@ quality monitor do Databricks, ler uma tabela e gravar as métricas são coisas
 sem relação entre si. Um port gordo obrigaria todo fake a implementar os quatro.
 """
 
+from datetime import date
 from typing import Protocol
 
 import pandas as pd
@@ -33,8 +34,41 @@ class QualityMonitor(Protocol):
     e a ficar impossível de testar sem workspace.
     """
 
-    def refreshed_drift_table(self, target_table: str, assets_dir: str, output_schema: str) -> str:
-        """Garante o monitor criado e atualizado; devolve a tabela de métricas."""
+    def refreshed_drift_table(
+        self,
+        target_table: str,
+        assets_dir: str,
+        output_schema: str,
+        baseline_table: str | None = None,
+    ) -> str:
+        """Garante o monitor criado e atualizado; devolve a tabela de métricas.
+
+        `baseline_table` muda o que o monitor calcula: com ela passa a emitir
+        linhas `BASELINE` além das `CONSECUTIVE`. Trocar a baseline de um
+        monitor que já existe exige atualizá-lo — criar é idempotente, mas não
+        reconfigura.
+        """
+        ...
+
+
+class BaselineBuilder(Protocol):
+    """Materializa a fatia da tabela observada que serve de baseline.
+
+    Uma fatia da PRÓPRIA tabela, e não os dados de treino: o Lakehouse
+    Monitoring exige mesmos nomes e tipos nas colunas analisadas, e a área de
+    scratch do treino diverge — o roundtrip por pandas transforma `bigint` em
+    `double`. A fatia é idêntica por construção.
+    """
+
+    def materialise(
+        self,
+        source_table: str,
+        timestamp_column: str,
+        start: date,
+        end: date,
+        target_table: str,
+    ) -> int:
+        """Devolve quantas linhas a baseline ficou tendo."""
         ...
 
 

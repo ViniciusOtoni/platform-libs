@@ -364,3 +364,110 @@ def test_without_a_trigger_it_only_measures():
 
     assert {r.status for r in results} == {"DRIFT_DETECTED"}
     assert audit.statuses() == ["SUCCESS"]
+
+
+# -- baseline: comparar contra a janela de treino ---------------------------
+
+
+def _com_baseline(metrics=None, config=None, baseline=None, monitor=None):
+    from mlplatform.testing import FakeBaselineBuilder
+
+    baseline = baseline if baseline is not None else FakeBaselineBuilder(rows=500)
+    monitor = monitor or FakeQualityMonitor(drift_table=DRIFT_TABLE)
+    # Com baseline configurada o veredito sai das linhas BASELINE, então o
+    # fixture padrão (só CONSECUTIVE) não serve aqui.
+    if metrics is None:
+        metrics = _metrics(drift_type=["BASELINE", "BASELINE"])
+    results = EvaluateDrift(
+        runs=FakeTrainingRunReader([_training_run()]),
+        monitor=monitor,
+        reader=FakeTableReader({DRIFT_TABLE: metrics}),
+        writer=FakeDriftMetricsWriter(),
+        audit=InMemoryAuditStore(),
+        clock=FixedClock(INSTANT),
+        baseline=baseline,
+    ).execute(
+        config=config or _config(baseline_timestamp_column="feature_ts"),
+        catalog="workspace",
+        run_id="r",
+        git_commit="a",
+        git_branch="main",
+    )
+    return results, baseline, monitor
+
+
+def test_the_baseline_is_the_training_window_of_the_current_model():
+    """A janela vinha sendo resolvida e DESCARTADA — o `resolve_baseline_window`
+    servia só de porteiro. Agora ela define o recorte."""
+    _, baseline, _ = _com_baseline()
+
+    call = baseline.calls[0]
+    assert call["source_table"] == _config().target_table
+    assert call["timestamp_column"] == "feature_ts"
+    assert (call["start"], call["end"]) == (date(2026, 1, 1), date(2026, 6, 30))
+
+
+def test_the_baseline_is_a_slice_of_the_table_being_watched():
+    """Da PRÓPRIA tabela, e não dos dados de treino: o Lakehouse Monitoring
+    exige mesmos nomes e tipos nas colunas analisadas, e a área de scratch do
+    treino diverge — o roundtrip por pandas transforma bigint em double."""
+    _, baseline, _ = _com_baseline()
+
+    call = baseline.calls[0]
+    assert call["source_table"] == _config().target_table
+    assert call["target_table"] == (
+        "workspace.exemplo_monitoring.customer_transaction_features_baseline"
+    )
+
+
+def test_the_monitor_receives_the_baseline():
+    _, _, monitor = _com_baseline()
+
+    assert monitor.calls[0]["baseline_table"] == (
+        "workspace.exemplo_monitoring.customer_transaction_features_baseline"
+    )
+
+
+def test_with_a_baseline_the_verdict_comes_from_the_baseline_rows():
+    """Com baseline configurada, `BASELINE` e `CONSECUTIVE` convivem na mesma
+    tabela. Ler as duas juntas responderia uma pergunta diferente da que o
+    domínio fez."""
+    metrics = pd.DataFrame(
+        {
+            "column_name": ["txn_count", "txn_count"],
+            "drift_type": ["CONSECUTIVE", "BASELINE"],
+            "slice_key": [None, None],
+            "window": [JANELA_NOVA, JANELA_NOVA],
+            "population_stability_index": [0.01, 0.9],
+        }
+    )
+    results, _, _ = _com_baseline(
+        metrics=metrics,
+        config=_config(columns=["txn_count"], baseline_timestamp_column="feature_ts"),
+    )
+
+    assert results[0].drift_metric_value == 0.9
+    assert results[0].status == "DRIFT_DETECTED"
+
+
+def test_an_empty_baseline_fails_loudly():
+    """Coluna de tempo errada, ou histórico que já não cobre a janela de treino.
+    Nos dois casos o monitor compararia contra o vazio."""
+    from mlplatform.monitoring.usecases import EmptyBaseline
+    from mlplatform.testing import FakeBaselineBuilder
+
+    with pytest.raises(EmptyBaseline, match="feature_ts"):
+        _com_baseline(baseline=FakeBaselineBuilder(rows=0))
+
+
+def test_without_the_column_declared_nothing_is_materialised():
+    """A tabela de predições não tem baseline possível: não existem predições do
+    período de treino — o modelo ainda não existia."""
+    from mlplatform.testing import FakeBaselineBuilder
+
+    _, baseline, monitor = _com_baseline(
+        metrics=_metrics(), config=_config(), baseline=FakeBaselineBuilder()
+    )
+
+    assert baseline.calls == []
+    assert monitor.calls[0]["baseline_table"] is None

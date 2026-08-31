@@ -284,9 +284,20 @@ class FakeQualityMonitor:
         self._drift_table = drift_table
         self.calls: list[dict] = []
 
-    def refreshed_drift_table(self, target_table: str, assets_dir: str, output_schema: str) -> str:
+    def refreshed_drift_table(
+        self,
+        target_table: str,
+        assets_dir: str,
+        output_schema: str,
+        baseline_table: str | None = None,
+    ) -> str:
         self.calls.append(
-            {"target_table": target_table, "assets_dir": assets_dir, "output_schema": output_schema}
+            {
+                "target_table": target_table,
+                "assets_dir": assets_dir,
+                "output_schema": output_schema,
+                "baseline_table": baseline_table,
+            }
         )
         return self._drift_table
 
@@ -319,3 +330,30 @@ class FakeRetrainTrigger:
         if self._fails:
             raise RuntimeError("repository_dispatch indisponível")
         return f"{domain}/{model_name}"
+
+
+class FakeBaselineBuilder:
+    """Registra o recorte pedido, sem tocar em tabela nenhuma."""
+
+    def __init__(self, rows: int = 100):
+        self._rows = rows
+        self.calls: list[dict] = []
+
+    def materialise(
+        self,
+        source_table: str,
+        timestamp_column: str,
+        start,
+        end,
+        target_table: str,
+    ) -> int:
+        self.calls.append(
+            {
+                "source_table": source_table,
+                "timestamp_column": timestamp_column,
+                "start": start,
+                "end": end,
+                "target_table": target_table,
+            }
+        )
+        return self._rows

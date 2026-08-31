@@ -15,8 +15,9 @@ from .baseline import resolve_baseline_window
 from .central_table import DRIFT_METRICS_TABLE, build_drift_metric_row
 from .contract import MonitoringConfig
 from .evaluation import DRIFT_DETECTED, DriftResult, evaluate_drift
-from .metrics import CONSECUTIVE, resolve
+from .metrics import BASELINE, CONSECUTIVE, resolve
 from .ports import (
+    BaselineBuilder,
     DriftMetricsWriter,
     QualityMonitor,
     RetrainTrigger,
@@ -63,6 +64,21 @@ def monitoring_schema(catalog: str, domain: str) -> str:
     return f"{catalog}.{domain}_monitoring"
 
 
+def baseline_table_name(catalog: str, domain: str, target_table: str) -> str:
+    """Uma baseline por tabela observada, no schema de monitoring do domínio."""
+    return f"{monitoring_schema(catalog, domain)}.{target_table.rsplit('.', 1)[-1]}_baseline"
+
+
+class EmptyBaseline(Exception):
+    """A janela de treino não recortou linha nenhuma da tabela observada.
+
+    Acontece quando a coluna de tempo declarada não é a que a tabela usa, ou
+    quando o histórico já não cobre a janela em que o modelo foi treinado. Nos
+    dois casos o monitor compararia contra o vazio e reportaria drift em tudo —
+    ou em nada, dependendo da métrica. Falhar aqui é mais barato.
+    """
+
+
 class EvaluateDrift:
     """Compara a distribuição corrente contra a do monitor e registra o veredito."""
 
@@ -75,6 +91,7 @@ class EvaluateDrift:
         audit: AuditStore,
         clock: Clock,
         retrain: RetrainTrigger | None = None,
+        baseline: BaselineBuilder | None = None,
     ):
         self._runs = runs
         self._monitor = monitor
@@ -85,6 +102,7 @@ class EvaluateDrift:
         # Opcional: sem gatilho o componente só mede e registra, que é o
         # comportamento de quem ainda não quer retreino automático.
         self._retrain = retrain
+        self._baseline = baseline
 
     def execute(
         self,
@@ -98,20 +116,27 @@ class EvaluateDrift:
         today = today or self._clock.now().date()
         full_model_name = derive_model_name(catalog, config.domain, config.model_name)
 
-        # Porteiro, não janela: exigir um treino bem-sucedido evita medir drift
-        # de um modelo que nunca chegou a produção. A janela devolvida não é
-        # usada — o monitor do Databricks faz a comparação por conta própria, a
-        # partir do snapshot dele.
+        # Duas funções ao mesmo tempo. Porteiro: exigir um treino bem-sucedido
+        # evita medir drift de um modelo que nunca chegou a produção. E janela:
+        # quando o domínio declara `baseline_timestamp_column`, é este intervalo
+        # que define a baseline — a fatia da tabela observada sobre a qual o
+        # modelo vigente aprendeu.
         try:
-            resolve_baseline_window(self._runs.training_runs(), full_model_name)
+            window_start, window_end = resolve_baseline_window(
+                self._runs.training_runs(), full_model_name
+            )
         except Exception:
             self._record(config, "FAILED", today, run_id, git_commit, git_branch)
             raise
+
+        baseline_table = self._materialise_baseline(config, catalog, window_start, window_end)
+        comparison = CONSECUTIVE if baseline_table is None else BASELINE
 
         drift_table = self._monitor.refreshed_drift_table(
             target_table=config.target_table,
             assets_dir=assets_dir(config.domain, config.model_name, config.target_type),
             output_schema=monitoring_schema(catalog, config.domain),
+            baseline_table=baseline_table,
         )
 
         metric = resolve(config.drift_metric)
@@ -124,7 +149,7 @@ class EvaluateDrift:
                 f"Colunas disponíveis: {sorted(metrics.columns)}"
             )
 
-        comparable = self._comparable(metrics)
+        comparable = self._comparable(metrics, comparison)
         results = [r for r in (self._latest_for(comparable, c, config, metric) for c in config.columns) if r]
 
         if config.columns and not results:
@@ -167,20 +192,43 @@ class EvaluateDrift:
         self._record(config, "SUCCESS", today, run_id, git_commit, git_branch)
         return results
 
+    def _materialise_baseline(
+        self, config: MonitoringConfig, catalog: str, start: date, end: date
+    ) -> str | None:
+        """A baseline, quando o domínio pediu comparação contra a janela de treino."""
+        if not config.baseline_timestamp_column or self._baseline is None:
+            return None
+
+        table = baseline_table_name(catalog, config.domain, config.target_table)
+        rows = self._baseline.materialise(
+            source_table=config.target_table,
+            timestamp_column=config.baseline_timestamp_column,
+            start=start,
+            end=end,
+            target_table=table,
+        )
+        if rows == 0:
+            raise EmptyBaseline(
+                f"a janela de treino {start}..{end} não recortou linha nenhuma de "
+                f"{config.target_table} por '{config.baseline_timestamp_column}' — "
+                f"a coluna de tempo é essa mesma, e o histórico ainda cobre a janela?"
+            )
+        return table
+
     @staticmethod
-    def _comparable(metrics):
-        """Só as linhas que representam a tabela inteira, na comparação corrente.
+    def _comparable(metrics, comparison: str):
+        """Só as linhas que representam a tabela inteira, na comparação pedida.
 
         O monitor emite uma linha por FATIA quando `slicing_exprs` está
-        configurado, e uma linha por tipo de comparação. Ler tudo junto e pegar
-        a última faria o veredito depender da ordem das linhas — às vezes uma
-        fatia, às vezes o total.
+        configurado, e uma linha por tipo de comparação. Com baseline
+        configurada convivem `BASELINE` e `CONSECUTIVE` na mesma tabela: ler as
+        duas juntas responderia uma pergunta diferente da que o domínio fez.
         """
         if metrics.empty:
             return metrics
         rows = metrics
         if _COMPARISON_KEY in rows.columns:
-            rows = rows[rows[_COMPARISON_KEY] == CONSECUTIVE]
+            rows = rows[rows[_COMPARISON_KEY] == comparison]
         if _SLICE_KEY in rows.columns:
             rows = rows[rows[_SLICE_KEY].isna()]
         return rows
