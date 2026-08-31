@@ -1,6 +1,6 @@
 # mlplatform
 
-Framework do ecossistema de MLOps no Databricks. Um pacote Python, cinco contextos, 280 testes que rodam sem cluster.
+Framework do ecossistema de MLOps no Databricks.
 
 O domínio declara o que é específico dele. O framework monta o job, executa o ciclo e gera o bundle.
 
@@ -60,33 +60,6 @@ Duas regras, e as duas valem mais do que parecem.
 **Contextos não se importam entre si.** `features` não importa `training`, e assim por diante. O que for comum sobe para `core`. Com quatro repositórios separados isso era impossível por construção; num pacote só, custa um import, e voltaria em semanas se dependesse de code review.
 
 **Infraestrutura só entra pelos adapters, e com o import dentro do método.** Não no topo do arquivo.
-
-A segunda regra existe por um motivo que não é estilo. O `register_model` chama `fe.log_model(..., code_paths=[...])`, o que empacota o fonte do framework dentro do artefato MLflow. O MLflow então importa esse pacote dentro do container do endpoint de serving, onde pyspark, delta e o `databricks-sdk` não estão instalados.
-
-Se `import mlplatform` puxar infraestrutura transitivamente, o endpoint quebra em produção, e nenhum teste comum pega, porque nenhum teste roda dentro daquele container.
-
-As duas regras são verificadas de dois lados. O lint recusa o import:
-
-```toml
-[lint.flake8-tidy-imports.banned-api]
-"mlplatform.features".msg = "bounded contexts não se importam entre si, compartilhe via mlplatform.core"
-"pyspark".msg = "infraestrutura só em adapters.py, e com o import dentro do método"
-```
-
-E um teste mede o que de fato foi carregado, num subprocesso limpo:
-
-```python
-INFRA_ROOTS = ("pyspark", "delta", "databricks", "mlflow", "sklearn")
-
-_PROBE = """
-import sys
-import {module}
-found = sorted({{m.split('.')[0] for m in sys.modules}} & {roots})
-print(','.join(found))
-"""
-```
-
-O lint pega a intenção, o teste pega o efeito. Um import indireto, três níveis abaixo, escapa do primeiro e não escapa do segundo.
 
 ## Descoberta do domínio
 
@@ -186,43 +159,6 @@ Onze, todos apontando para `entrypoints.py`.
 | `mlp-promote-model` | move o alias para a versão aprovada |
 | `mlp-generate-resources` | gera o YAML dos jobs |
 | `mlp-generate-bundle` | materializa o bundle DAB inteiro |
-
-O nome tem uma restrição que não é óbvia. Ao rodar um `python_wheel_task`, o Databricks monta uma célula assim:
-
-```python
-entry = [ep for ep in metadata.distribution(pkg).entry_points if ep.name == "<nome>"]
-if entry:
-    entry[0].load()()
-else:
-    module = importlib.import_module(pkg)
-    module.<nome>()          # o nome entra cru, com hífens e tudo
-```
-
-A última linha é lixo, porque hífen não é identificador. Mas o Python compila a célula inteira antes de executar qualquer coisa, então ela precisa ao menos parsear, mesmo sendo um ramo morto.
-
-E quase sempre parseia por acidente: `module.mlp-score-batch()` vira a expressão `module.mlp - score - batch()`, uma cadeia de subtrações entre nomes. Feio, mas válido.
-
-O acidente para de funcionar quando um dos pedaços entre hífens é uma palavra reservada. Foi o que derrubou `mlp-fit-and-compare`, que virou `mlp - fit - and - compare()` e não compila. Daí o nome atual, e daí um teste que tenta compilar a linha gerada para cada script declarado.
-
-## Testes
-
-280 testes, nenhum precisa de cluster.
-
-Os fakes ficam em `mlplatform.testing` e são publicados de propósito. Sem isso, cada domínio escreveria os seus, e um fake permissivo esconde bug: o `FakeExperimentTracker` levanta `ImmutableParamError` na reescrita de um parâmetro porque o MLflow real também levanta.
-
-```python
-from mlplatform.testing import FakeFeatureWriter, FakeSourceReader, InMemoryAuditStore
-```
-
-Três testes existem para pegar falha que só apareceria em produção:
-
-| teste | o que guarda |
-|---|---|
-| `test_import_hygiene` | o container de serving quebrando por import transitivo de infra |
-| `test_entrypoint_names` | o nome de console script que o launcher do Databricks não consegue compilar |
-| `test_resource_gen` (por contexto) | job parameter declarado num gerador e não aceito pelo parser |
-
-O terceiro merece nota. O Databricks injeta todo job parameter em todas as tasks do job, não só na que o declarou. Um argumento que um parser não conhece aborta a task com `SystemExit(2)`, sem dizer qual argumento foi.
 
 ## Release
 
