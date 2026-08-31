@@ -20,14 +20,25 @@ class FeatureTableSpec:
     def partition_cols(self) -> list[str]:
         """Colunas de particionamento do backfill.
 
-        O default — a primeira entity key — era `entity_keys[:1]` hardcodado
-        dentro do orquestrador, o que tornava a política de particionamento
-        invisível para quem declara a feature table e impossível de ajustar.
-        Continua sendo o default, mas agora é declarável na spec.
+        O default é a COLUNA DE TEMPO, e isso é o que faz o modo `BACKFILL`
+        significar o que promete.
+
+        O default anterior era a primeira entity key. Como o backfill grava com
+        `partitionOverwriteMode=dynamic`, cada janela substituía a partição
+        inteira do cliente — apagando todas as safras anteriores dele. O
+        sintoma: rodar backfill de janeiro a agosto deixava UMA safra na
+        tabela, a última, com a auditoria registrando as oito execuções como
+        SUCCESS. Uma feature store sem histórico, e nada acusando.
+
+        Particionar pela chave de entidade também é ruim por si numa tabela
+        temporal: cardinalidade altíssima e arquivos minúsculos.
+
+        Segue declarável na spec para o caso raro em que o domínio precise de
+        outra coisa.
         """
         if self.partition_by is not None:
             return list(self.partition_by)
-        return self.entity_keys[:1]
+        return [self.timestamp_key]
 
 
 _registry: Registry[FeatureTableSpec] = Registry(kind="feature table")
