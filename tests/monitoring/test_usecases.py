@@ -254,12 +254,29 @@ def test_the_measurements_land_in_the_central_table():
     assert {r["entity_name"] for r in rows} == {_config().target_table}
 
 
+def test_the_assets_folder_does_not_collide_with_the_experiment():
+    """O treino cria um EXPERIMENT em `/Shared/mlplatform/<dominio>/<modelo>`.
+    Um experiment nao e diretorio: criar a pasta de assets do monitor dentro
+    dele falha com "Path component exists under parent but is not a directory",
+    e o monitor fica MONITOR_STATUS_FAILED — estado do qual nao sai sozinho.
+
+    So aparece em dominio NOVO: onde o monitor ja existe, `create` nem roda."""
+    from mlplatform.monitoring.usecases import ASSETS_ROOT, assets_dir
+
+    caminho = assets_dir("credito", "pd_inadimplencia", "feature_table")
+
+    assert not caminho.startswith("/Shared/mlplatform/")
+    assert caminho.startswith(ASSETS_ROOT + "/")
+
+
 def test_the_monitor_is_scoped_to_the_domain_and_target():
     _, _, _, monitor = _run()
 
     call = monitor.calls[0]
     assert call["target_table"] == _config().target_table
-    assert call["assets_dir"] == "/Shared/mlplatform/exemplo/propensao_exemplo/feature_table"
+    assert call["assets_dir"] == (
+        "/Shared/mlplatform-monitoring/exemplo/propensao_exemplo/feature_table"
+    )
     assert call["output_schema"] == "workspace.exemplo_monitoring"
 
 
