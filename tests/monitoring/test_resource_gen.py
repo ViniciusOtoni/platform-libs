@@ -45,24 +45,38 @@ def test_generates_one_job_per_config_with_its_own_schedule():
     assert predictions_job["schedule"]["quartz_cron_expression"] == "0 0 8 * * ?"
 
 
-def test_each_job_has_a_single_evaluate_drift_task():
+def test_each_job_runs_the_entry_point_not_a_notebook():
+    """Era o último componente em `notebook_task`, o que obrigava o repositório
+    de domínio a versionar `notebooks/evaluate_drift.py`."""
     register_monitoring_config(_config())
 
-    resources = generate_resources()
-    job = list(resources["resources"]["jobs"].values())[0]
+    job = list(generate_resources()["resources"]["jobs"].values())[0]
 
     assert [t["task_key"] for t in job["tasks"]] == ["evaluate_drift"]
-    assert job["tasks"][0]["notebook_task"]["notebook_path"] == "../notebooks/evaluate_drift.py"
+    assert "notebook_task" not in job["tasks"][0]
+    assert job["tasks"][0]["python_wheel_task"]["entry_point"] == "mlp-evaluate-drift"
 
 
-def test_job_parameters_carry_domain_model_and_target_type():
+def test_the_config_is_identified_statically_not_by_a_parameter():
+    """`model_name` e `target_type` iam como job parameters, e o entrypoint os
+    exige. Como este job SÓ roda por agendamento, e cron não preenche
+    parâmetro, ele morreria antes de tocar em dado nenhum."""
     register_monitoring_config(_config())
 
-    resources = generate_resources()
-    job = list(resources["resources"]["jobs"].values())[0]
-    param_names = {p["name"] for p in job["parameters"]}
+    job = list(generate_resources(domain_entry_point="exemplo_monitoring")["resources"]["jobs"].values())[0]
+    named = job["tasks"][0]["python_wheel_task"]["named_parameters"]
 
-    assert param_names == {"domain", "model_name", "target_type", "catalog", "git_commit", "git_branch"}
+    assert named == {
+        "model_name": "propensao_exemplo",
+        "target_type": "feature_table",
+        "domain": "exemplo_monitoring",
+    }
+    assert all(p["default"] for p in job["parameters"])
+
+
+def test_an_empty_registry_is_an_error_not_an_empty_bundle():
+    with pytest.raises(ValueError, match="nenhuma MonitoringConfig"):
+        generate_resources()
 
 
 def test_environment_dependencies_declared_when_given():
@@ -76,11 +90,12 @@ def test_environment_dependencies_declared_when_given():
     assert job["tasks"][0]["environment_key"] == "default"
 
 
-def test_without_environment_dependencies_omits_environments():
+def test_without_environment_dependencies_falls_back_to_the_defaults():
+    """Sem environment o job não instala nada e o entry point não existe: o
+    default do framework é o wheel do domínio mais o do próprio framework."""
     register_monitoring_config(_config())
 
-    resources = generate_resources()
-    job = list(resources["resources"]["jobs"].values())[0]
+    job = list(generate_resources()["resources"]["jobs"].values())[0]
 
-    assert "environments" not in job
-    assert "environment_key" not in job["tasks"][0]
+    assert job["environments"][0]["spec"]["dependencies"]
+    assert job["tasks"][0]["environment_key"] == "default"

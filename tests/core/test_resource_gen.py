@@ -54,3 +54,25 @@ def test_with_environment_copies_the_dependency_list():
     deps.append("mutacao-depois-da-chamada")
 
     assert job["environments"][0]["spec"]["dependencies"] == ["../dist/*.whl"]
+
+
+def test_the_generated_yaml_never_uses_anchors():
+    """Os geradores compartilham a lista de job parameters entre os jobs, e o
+    dumper padrão transforma a segunda ocorrência em `*id001`. O DABs resolve,
+    mas o YAML é a principal superfície de debug desde que os notebooks saíram —
+    quem o abre precisa ver o conteúdo, não uma referência."""
+    import tempfile
+    from pathlib import Path
+
+    from mlplatform.core.resource_gen import dump_yaml
+
+    shared = [{"name": "catalog", "default": "workspace"}]
+    resource = {"resources": {"jobs": {"a": {"parameters": shared}, "b": {"parameters": shared}}}}
+
+    out = Path(tempfile.mkdtemp()) / "r.yml"
+    dump_yaml(resource, str(out))
+    text = out.read_text(encoding="utf-8")
+
+    assert "&id" not in text
+    assert "*id" not in text
+    assert text.count("name: catalog") == 2

@@ -262,3 +262,46 @@ class FakeModelPublisher:
 
     def promote(self, full_model_name: str, version: int, alias: str) -> None:
         self.promotions.append((full_model_name, version, alias))
+
+
+class FakeTrainingRunReader:
+    def __init__(self, runs: list | None = None):
+        self._runs = runs or []
+
+    def training_runs(self) -> list:
+        return list(self._runs)
+
+
+class FakeQualityMonitor:
+    """Devolve o nome de uma tabela de métricas, sem criar monitor nenhum.
+
+    A máquina de estados real — criar, disparar refresh, esperar até 20 minutos
+    — vive no adapter e não é exercitada aqui. É a lacuna conhecida: fake verde
+    não diz nada sobre o polling.
+    """
+
+    def __init__(self, drift_table: str = "workspace.exemplo_monitoring.drift"):
+        self._drift_table = drift_table
+        self.calls: list[dict] = []
+
+    def refreshed_drift_table(self, target_table: str, assets_dir: str, output_schema: str) -> str:
+        self.calls.append(
+            {"target_table": target_table, "assets_dir": assets_dir, "output_schema": output_schema}
+        )
+        return self._drift_table
+
+
+class FakeTableReader:
+    def __init__(self, tables: dict[str, pd.DataFrame] | None = None):
+        self._tables = tables or {}
+
+    def to_pandas(self, table_name: str) -> pd.DataFrame:
+        return self._tables.get(table_name, pd.DataFrame())
+
+
+class FakeDriftMetricsWriter:
+    def __init__(self) -> None:
+        self.written: list[tuple[str, list[dict]]] = []
+
+    def append(self, rows: list[dict], table_name: str) -> None:
+        self.written.append((table_name, rows))
