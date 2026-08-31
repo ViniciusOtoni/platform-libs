@@ -56,8 +56,24 @@ class NoColumnMeasured(Exception):
     """
 
 
+# Raiz separada da dos experiments, e nao um subcaminho dela.
+#
+# O treino cria um EXPERIMENT do MLflow em
+# `/Shared/mlplatform/<dominio>/<modelo>`. Um experiment nao e diretorio, entao
+# criar a pasta de assets do monitor em `/Shared/mlplatform/<dominio>/<modelo>/
+# <alvo>` falha com:
+#
+#   Path component '<modelo>' exists under parent <id> but is not a directory
+#
+# E o monitor fica MONITOR_STATUS_FAILED, estado do qual ele nao sai sozinho —
+# refresh e list_refreshes passam a ser recusados.
+#
+# So aparece em dominio NOVO: onde o monitor ja existe, `create` nem e chamado.
+ASSETS_ROOT = "/Shared/mlplatform-monitoring"
+
+
 def assets_dir(domain: str, model_name: str, target_type: str) -> str:
-    return f"/Shared/mlplatform/{domain}/{model_name}/{target_type}"
+    return f"{ASSETS_ROOT}/{domain}/{model_name}/{target_type}"
 
 
 def monitoring_schema(catalog: str, domain: str) -> str:

@@ -22,6 +22,15 @@ REFRESH_TIMEOUT_SECONDS = 1200
 REFRESH_POLL_SECONDS = 15
 
 
+class MonitorCreationFailed(Exception):
+    """A criacao do monitor falhou, e ele nao se recupera sozinho.
+
+    Existe para que a causa apareca. O estado FAILED faz a API recusar refresh
+    e list_refreshes com um BadRequest que so diz "nao suportado neste status" —
+    quem investiga precisa da mensagem da falha original.
+    """
+
+
 class DeltaTableReader:
     def __init__(self, spark):
         self._spark = spark
@@ -165,6 +174,14 @@ class DatabricksQualityMonitor:
         limite = time.time() + REFRESH_TIMEOUT_SECONDS
         while True:
             info = client.quality_monitors.get(table_name=target_table)
+            if info.status == MonitorInfoStatus.MONITOR_STATUS_FAILED:
+                # Um monitor FAILED nao sai desse estado sozinho: refresh e
+                # list_refreshes passam a ser recusados com BadRequest, que nao
+                # diz nada sobre a causa. A mensagem de falha da criacao, sim.
+                raise MonitorCreationFailed(
+                    f"o monitor de '{target_table}' ficou MONITOR_STATUS_FAILED: "
+                    f"{info.latest_monitor_failure_msg or '(sem mensagem)'}"
+                )
             if info.status != MonitorInfoStatus.MONITOR_STATUS_PENDING:
                 return
             if time.time() > limite:
