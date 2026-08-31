@@ -13,6 +13,8 @@ notebook *era* o registro do que rodou.
 """
 
 import argparse
+import os
+from dataclasses import replace
 from datetime import date
 
 from .core.adapters import DeltaAuditStore
@@ -51,6 +53,8 @@ def _common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--catalog", default="workspace")
     parser.add_argument("--git_commit", default="local")
     parser.add_argument("--git_branch", default="local")
+    # Vazio = não concede. Vem do conf/variables.yml do domínio via job parameter.
+    parser.add_argument("--reader_group", default="")
 
 
 def _load(args: argparse.Namespace) -> None:
@@ -88,7 +92,7 @@ def run_feature_table(argv: list[str] | None = None) -> int:
 
     RunFeatureTable(
         reader=SparkSourceReader(spark),
-        writer=DeltaFeatureWriter(spark),
+        writer=DeltaFeatureWriter(spark, args.reader_group),
         audit=DeltaAuditStore(spark),
         clock=SystemClock(),
         online=LakebaseOnlineStore() if spec.online else None,
@@ -273,7 +277,7 @@ def score_batch(argv: list[str] | None = None) -> int:
     ScoreBatch(
         registry=SdkModelRegistry(),
         scorer=FeatureEngineeringScorer(spark),
-        writer=DeltaPredictionWriter(spark),
+        writer=DeltaPredictionWriter(spark, args.reader_group),
         audit=DeltaAuditStore(spark),
         clock=SystemClock(),
     ).execute(
@@ -316,6 +320,7 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
         DatabricksQualityMonitor,
         DeltaDriftMetricsWriter,
         DeltaTableReader,
+        GitHubRepositoryDispatch,
     )
     from .monitoring.contract import get_monitoring_config
     from .monitoring.usecases import EvaluateDrift
@@ -324,6 +329,9 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
     _common_args(parser)
     parser.add_argument("--model_name", required=True)
     parser.add_argument("--target_type", required=True, choices=["feature_table", "predictions"])
+    # Repositório da esteira do domínio, no formato owner/repo. Vazio desliga o
+    # retreino automático: o componente só mede e registra.
+    parser.add_argument("--retrain_repository", default="")
     args = parser.parse_args(argv)
 
     _load(args)
@@ -340,9 +348,25 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
         flush=True,
     )
 
+    # O token vem do ambiente, não de parâmetro de job: parâmetro de job fica
+    # visível na UI e no histórico de execuções de quem tiver acesso ao job.
+    # No Databricks isso se resolve com um secret scope montado como variável de
+    # ambiente na task.
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    retrain = None
+    if args.retrain_repository and github_token:
+        retrain = GitHubRepositoryDispatch(args.retrain_repository, github_token)
+    elif args.retrain_repository:
+        print(
+            "[mlplatform] AVISO: retrain_repository declarado mas GITHUB_TOKEN ausente — "
+            "drift será medido e registrado, mas nenhum retreino será pedido",
+            flush=True,
+        )
+
     results = EvaluateDrift(
+        retrain=retrain,
         runs=AuditTrainingRunReader(spark),
-        monitor=DatabricksQualityMonitor(spark),
+        monitor=DatabricksQualityMonitor(spark, args.reader_group),
         reader=DeltaTableReader(spark),
         writer=DeltaDriftMetricsWriter(spark),
         audit=DeltaAuditStore(spark),
@@ -362,6 +386,70 @@ def evaluate_drift(argv: list[str] | None = None) -> int:
         flush=True,
     )
     return 0
+
+
+def model_version(argv: list[str] | None = None) -> int:
+    """Imprime a versão mais recente do modelo, uma linha, sem mais nada.
+
+    Existe para a esteira poder FIXAR a versão que vai promover. Sem isso, o
+    passo de promoção resolveria "a mais recente" no momento da aprovação — que
+    pode ser outra, se um treino agendado rodou nesse meio-tempo. Quem aprovou
+    inspecionou uma versão específica; é essa que tem que ir.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    from .core.naming import derive_model_name
+
+    parser = argparse.ArgumentParser(prog="mlp-model-version")
+    parser.add_argument("--catalog", default="workspace")
+    parser.add_argument("--domain", required=True, help="domínio da config, não o entry point")
+    parser.add_argument("--model_name", required=True)
+    args = parser.parse_args(argv)
+
+    full_name = derive_model_name(args.catalog, args.domain, args.model_name)
+    versions = WorkspaceClient().model_versions.list(full_name)
+    newest = max((v.version for v in versions), default=None)
+    if newest is None:
+        raise SystemExit(f"nenhuma versão registrada em {full_name}")
+    print(newest)
+    return 0
+
+
+def promote_model(argv: list[str] | None = None) -> int:
+    """Aponta o alias para uma versão específica.
+
+    Separado do treino de propósito: é o passo que fica atrás da aprovação
+    manual do GitHub Environment. Treinar produz um candidato; promover é que
+    coloca em produção, e as duas coisas precisam poder acontecer em momentos
+    diferentes.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    from .core.naming import derive_model_name, validate_qualified_name
+
+    parser = argparse.ArgumentParser(prog="mlp-promote-model")
+    parser.add_argument("--catalog", default="workspace")
+    parser.add_argument("--domain", required=True, help="domínio da config, não o entry point")
+    parser.add_argument("--model_name", required=True)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--alias", default="champion")
+    args = parser.parse_args(argv)
+
+    full_name = derive_model_name(args.catalog, args.domain, args.model_name)
+    validate_qualified_name(full_name, kind="model name")
+
+    WorkspaceClient().registered_models.set_alias(full_name, args.alias, int(args.version))
+    print(f"[mlplatform] {full_name}@{args.alias} -> v{args.version}", flush=True)
+    return 0
+
+
+NO_PROMOTION = "none"
+
+
+def _with_promotion_override(config, override: str):
+    if not override:
+        return config
+    return replace(config, promotion_alias=None if override == NO_PROMOTION else override)
 
 
 def _training_scorer(config):
@@ -435,20 +523,33 @@ def select_test_register(argv: list[str] | None = None) -> int:
     from .training.adapters import FeatureEngineeringPublisher
     from .training.usecases import SelectTestAndRegister
 
-    args = _training_parser("mlp-select-test-register").parse_args(argv)
+    parser = _training_parser("mlp-select-test-register")
+    # Sobrescreve o alias declarado na config:
+    #   ""      -> usa o que o domínio declarou (execução agendada normal)
+    #   "none"  -> registra e NÃO promove
+    #   outro   -> promove para esse alias
+    # O modo "none" é o do retreino disparado por drift, em que a promoção fica
+    # atrás de uma aprovação humana no GitHub. Sentinela explícita em vez de
+    # vazio-significa-não-promover: o Databricks injeta job parameters não
+    # preenchidos como string vazia, e isso faria toda execução agendada parar
+    # de promover sem ninguém pedir.
+    parser.add_argument("--promotion_alias", default="")
+    args = parser.parse_args(argv)
     _load(args)
     config, spark, deps = _training_context(args)
 
     name = SelectTestAndRegister(
         scratch=deps["scratch"],
         tracker=deps["tracker"],
-        publisher=FeatureEngineeringPublisher(spark),
+        publisher=FeatureEngineeringPublisher(spark, args.reader_group),
         builder=deps["builder"],
         audit=DeltaAuditStore(spark),
         clock=SystemClock(),
         channel=deps["channel"],
     ).execute(
-        config=config,
+        # `--promotion_alias` sobrescreve a config quando presente; ausente
+        # mantém o que o domínio declarou.
+        config=_with_promotion_override(config, args.promotion_alias),
         catalog=args.catalog,
         scorer=_training_scorer(config),
         run_id=_run_id(),

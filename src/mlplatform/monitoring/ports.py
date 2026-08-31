@@ -44,3 +44,18 @@ class TableReader(Protocol):
 
 class DriftMetricsWriter(Protocol):
     def append(self, rows: list[dict], table_name: str) -> None: ...
+
+
+class RetrainTrigger(Protocol):
+    """Pede um retreino quando o drift passa do limiar.
+
+    O gatilho sai do Databricks e entra no GitHub, e não o contrário: é o
+    GitHub que tem o mecanismo de aprovação manual (Environments com required
+    reviewers) que separa "modelo novo existe" de "modelo novo está servindo".
+    Um retreino disparado inteiramente dentro do Databricks promoveria sozinho,
+    que é justamente o que não se quer quando a causa foi drift.
+    """
+
+    def request_retrain(self, domain: str, model_name: str, drifted_columns: list[str]) -> str:
+        """Dispara o retreino e devolve uma referência rastreável."""
+        ...

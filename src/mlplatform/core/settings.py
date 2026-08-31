@@ -32,6 +32,14 @@ class BundleSettings:
     # domínio. Não é derivável: só se descobre carregando, e carregar exige saber
     # qual. É a única identidade que o arquivo precisa carregar.
     domain_package: str | None = None
+    # Grupo do workspace que recebe leitura nos schemas do domínio. Sem ele os
+    # objetos nascem visíveis só para o principal que rodou a esteira — um
+    # service principal de CI —, e o time do domínio não enxerga a própria
+    # feature table nem o próprio modelo.
+    reader_group: str = ""
+    # Repositório (owner/repo) que recebe o `repository_dispatch` quando o
+    # monitoring detecta drift. Vazio desliga o retreino automático.
+    retrain_repository: str = ""
     database_instance_name: str = ""
     job_name: str | None = None
     targets: dict = field(default_factory=lambda: {"dev": {"mode": "development", "default": True}})

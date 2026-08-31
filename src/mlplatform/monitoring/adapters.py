@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from mlplatform.core.audit import AUDIT_TABLE
+from mlplatform.core.uc import ensure_schema
 
 from .baseline import TrainingRun
 
@@ -64,8 +65,11 @@ class DatabricksQualityMonitor:
     nenhum teste sem workspace exercita de verdade.
     """
 
-    def __init__(self, spark):
+    def __init__(self, spark, reader_group: str | None = None):
         self._spark = spark
+        # Grupo do domínio que recebe leitura nos schemas criados aqui. `None`
+        # não concede — é o certo em workspace pessoal, onde não há grupo.
+        self._reader_group = reader_group
 
     def refreshed_drift_table(self, target_table: str, assets_dir: str, output_schema: str) -> str:
         from databricks.sdk import WorkspaceClient
@@ -79,7 +83,7 @@ class DatabricksQualityMonitor:
         else:
             # saveAsTable não cria o schema em Unity Catalog, e o monitor grava
             # as tabelas de saída nele.
-            self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {output_schema}")
+            ensure_schema(self._spark, output_schema, self._reader_group)
             monitor = client.quality_monitors.create(
                 table_name=target_table,
                 assets_dir=assets_dir,
@@ -131,11 +135,59 @@ class DeltaDriftMetricsWriter:
         self._spark = spark
 
     def append(self, rows: list[dict], table_name: str) -> None:
-        schema = table_name.rsplit(".", 1)[0]
-        self._spark.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        # `platform_monitoring` é da plataforma, não de um domínio.
+        ensure_schema(self._spark, table_name.rsplit(".", 1)[0])
         frame = self._spark.createDataFrame(rows)
         mode = "append" if self._spark.catalog.tableExists(table_name) else "overwrite"
         # mergeSchema pelo mesmo motivo da tabela de predições: o conjunto de
         # colunas cresce quando o framework passa a registrar mais sobre a
         # medição, e sem isso o append falha até alguém alterar a tabela à mão.
         frame.write.format("delta").mode(mode).option("mergeSchema", "true").saveAsTable(table_name)
+
+
+class GitHubRepositoryDispatch:
+    """Dispara um `repository_dispatch` no repositório da esteira.
+
+    `repository_dispatch` e não `workflow_dispatch`: o primeiro carrega um
+    payload livre (qual modelo, quais colunas driftaram) que o workflow lê, e
+    não exige que o workflow exista numa branch específica.
+
+    O token precisa de escopo `contents: write` no repositório alvo. Falhar aqui
+    é falha do job: drift detectado sem retreino pedido é pior que não medir —
+    alguém olharia a tabela, veria DRIFT_DETECTED, e assumiria que a esteira
+    reagiu.
+    """
+
+    def __init__(self, repository: str, token: str, event_type: str = "mlplatform-drift"):
+        self._repository = repository
+        self._token = token
+        self._event_type = event_type
+
+    def request_retrain(self, domain: str, model_name: str, drifted_columns: list[str]) -> str:
+        import json
+        import urllib.request
+
+        payload = {
+            "event_type": self._event_type,
+            "client_payload": {
+                "domain": domain,
+                "model_name": model_name,
+                "drifted_columns": drifted_columns,
+            },
+        }
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{self._repository}/dispatches",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            # 204 é a resposta de sucesso do endpoint de dispatches: sem corpo.
+            if response.status != 204:
+                raise RuntimeError(f"repository_dispatch devolveu {response.status}")
+        return f"{self._repository}#{self._event_type}"

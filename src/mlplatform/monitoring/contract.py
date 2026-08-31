@@ -3,6 +3,8 @@ from typing import Literal
 
 from mlplatform.core.registry import Registry
 
+from .metrics import DEFAULT_DRIFT_METRIC, resolve
+
 
 @dataclass
 class MonitoringConfig:
@@ -13,6 +15,21 @@ class MonitoringConfig:
     columns: list[str]
     threshold: float
     schedule_cron: str
+    # Qual das métricas da tabela de drift do monitor decide o veredito. O
+    # default é o único escalar preenchido para colunas numéricas E
+    # categóricas; as demais vêm nulas fora do tipo delas, e uma métrica nula
+    # produz "sem drift" para sempre.
+    drift_metric: str = DEFAULT_DRIFT_METRIC
+
+    def __post_init__(self) -> None:
+        metric = resolve(self.drift_metric)
+        if not metric.bounded and self.threshold <= 0:
+            # Métrica sem teto exige limiar positivo explícito: com <= 0 todo
+            # valor dispara, e o gate vira ruído em vez de sinal.
+            raise ValueError(
+                f"'{self.drift_metric}' não é limitada a [0,1] ({metric.note}); "
+                f"threshold precisa ser positivo, veio {self.threshold}"
+            )
 
 
 def _config_key(domain: str, model_name: str, target_type: str) -> str:

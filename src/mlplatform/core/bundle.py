@@ -20,7 +20,22 @@ _VARIABLE_DOCS = {
     "database_instance_name": (
         "Database Instance do Lakebase, usado só por feature tables com online=True."
     ),
+    "reader_group": "Grupo do workspace que recebe leitura nos schemas do domínio.",
+    "retrain_repository": (
+        "Repositório owner/repo avisado por repository_dispatch quando há drift."
+    ),
 }
+
+# Nível concedido ao grupo do domínio sobre os recursos do bundle.
+#
+# CAN_RUN, e não CAN_MANAGE: o time precisa ver os jobs e disparar uma execução,
+# mas a definição vem do git. Poder editar o job pela UI criaria divergência
+# silenciosa entre o que está deployado e o que está versionado — e o próximo
+# deploy sobrescreveria a edição sem avisar.
+#
+# O DABs aceita só CAN_MANAGE, CAN_VIEW e CAN_RUN aqui. CAN_MANAGE_RUN existe na
+# API de jobs, não no bundle — e o `bundle validate` reprova.
+_RESOURCE_PERMISSION_LEVEL = "CAN_RUN"
 
 
 def bundle_name(domain: str, component: str, domain_package: str | None = None) -> str:
@@ -60,7 +75,19 @@ def generate_bundle(settings: BundleSettings, domain: str, component: str, wheel
             "default": settings.database_instance_name,
         }
 
-    return {
+    # Declarada SEMPRE, mesmo vazia: os jobs referenciam `${var.reader_group}`
+    # nos parâmetros, e uma referência a variável inexistente faz o
+    # `bundle validate` falhar. Vazia significa "não conceda nada".
+    variables["reader_group"] = {
+        "description": _VARIABLE_DOCS["reader_group"],
+        "default": settings.reader_group,
+    }
+    variables["retrain_repository"] = {
+        "description": _VARIABLE_DOCS["retrain_repository"],
+        "default": settings.retrain_repository,
+    }
+
+    bundle: dict = {
         "bundle": {"name": bundle_name(domain, component, settings.domain_package)},
         "include": ["resources/*.yml"],
         "artifacts": {
@@ -75,3 +102,18 @@ def generate_bundle(settings: BundleSettings, domain: str, component: str, wheel
         "variables": variables,
         "targets": settings.targets,
     }
+
+    # `permissions` no topo vale para todos os recursos do bundle — jobs e
+    # endpoints —, então um domínio novo não precisa lembrar de conceder por
+    # recurso.
+    if settings.reader_group:
+        bundle["permissions"] = [
+            # A identidade que deploya precisa estar aqui explicitamente. Sem
+            # ela o `bundle validate` avisa que CAN_MANAGE só se aplica quando o
+            # deploy sai dessa mesma identidade — e em CI ele sai de um service
+            # principal, não de quem escreveu o bundle. `current_user` resolve
+            # para qualquer uma das duas.
+            {"user_name": "${workspace.current_user.userName}", "level": "CAN_MANAGE"},
+            {"group_name": settings.reader_group, "level": _RESOURCE_PERMISSION_LEVEL},
+        ]
+    return bundle
