@@ -28,6 +28,8 @@ _JOB_PARAMETERS = [
     {"name": "reader_group", "default": "${var.reader_group}"},
     # Vazio desliga o retreino automático.
     {"name": "retrain_repository", "default": "${var.retrain_repository}"},
+    # Referência a secret: o Databricks resolve em runtime e redige o valor.
+    {"name": "github_token", "default": "${var.retrain_token_secret}"},
 ]
 
 

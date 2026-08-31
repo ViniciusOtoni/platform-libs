@@ -40,6 +40,14 @@ class BundleSettings:
     # Repositório (owner/repo) que recebe o `repository_dispatch` quando o
     # monitoring detecta drift. Vazio desliga o retreino automático.
     retrain_repository: str = ""
+    # Secret do Databricks com o token do GitHub, no formato `escopo/chave`.
+    #
+    # Vai por JOB PARAMETER com referência `{{secrets/...}}`, e não por variável
+    # de ambiente: o serverless não tem onde declarar env var — o spec do
+    # environment aceita só `client` e `dependencies`, e a task não tem campo
+    # para isso. A referência é resolvida em runtime e redigida nos logs, que é
+    # o mecanismo que o Databricks oferece para esse caso.
+    retrain_token_secret: str = ""
     database_instance_name: str = ""
     job_name: str | None = None
     targets: dict = field(default_factory=lambda: {"dev": {"mode": "development", "default": True}})

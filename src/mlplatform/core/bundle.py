@@ -24,6 +24,9 @@ _VARIABLE_DOCS = {
     "retrain_repository": (
         "Repositório owner/repo avisado por repository_dispatch quando há drift."
     ),
+    "retrain_token_secret": (
+        "Referência ao secret com o token do GitHub, resolvida pelo Databricks."
+    ),
 }
 
 # Nível concedido ao grupo do domínio sobre os recursos do bundle.
@@ -85,6 +88,17 @@ def generate_bundle(settings: BundleSettings, domain: str, component: str, wheel
     variables["retrain_repository"] = {
         "description": _VARIABLE_DOCS["retrain_repository"],
         "default": settings.retrain_repository,
+    }
+    # O domínio declara `escopo/chave`; quem monta a sintaxe de referência é o
+    # framework. Declarar `{{secrets/...}}` à mão em cada bundle convidaria ao
+    # erro de digitar o token direto ali.
+    variables["retrain_token_secret"] = {
+        "description": _VARIABLE_DOCS["retrain_token_secret"],
+        "default": (
+            f"{{{{secrets/{settings.retrain_token_secret}}}}}"
+            if settings.retrain_token_secret
+            else ""
+        ),
     }
 
     bundle: dict = {
