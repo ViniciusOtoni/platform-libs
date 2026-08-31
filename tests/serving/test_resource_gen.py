@@ -129,3 +129,27 @@ def test_every_job_carries_the_serverless_environment():
     for job in _gen()["resources"]["jobs"].values():
         assert job["environments"][0]["spec"]["client"] == "3"
         assert all(t["environment_key"] == "default" for t in job["tasks"])
+
+
+def test_a_domain_that_never_trained_gets_an_actionable_error():
+    """O recurso de endpoint exige `entity_version` numérico — o DABs recusa
+    alias —, então o alias resolve na hora de GERAR o bundle. Um domínio novo
+    precisa treinar antes de deployar serving online.
+
+    O erro cru do SDK é `Schema '<catalog>.<domain>_models' does not exist`:
+    verdadeiro, e inútil para quem não conhece a ordem."""
+    from databricks.sdk.errors import NotFound
+
+    from mlplatform.serving.adapters import ModelNotTrainedYet, SdkModelRegistry
+
+    class _RegistroVazio(SdkModelRegistry):
+        def version_for_alias(self, full_model_name, alias):
+            try:
+                raise NotFound("Schema 'workspace.credito_models' does not exist.")
+            except NotFound as erro:
+                raise ModelNotTrainedYet(
+                    f"'{full_model_name}@{alias}' não existe ainda. Rode o pipeline de treino."
+                ) from erro
+
+    with pytest.raises(ModelNotTrainedYet, match="Rode o pipeline de treino"):
+        _RegistroVazio().version_for_alias("workspace.credito_models.pd_inadimplencia", "champion")

@@ -73,11 +73,35 @@ class DeltaPredictionWriter:
         df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(table_name)
 
 
+class ModelNotTrainedYet(Exception):
+    """O modelo referenciado pelo serving online ainda não existe.
+
+    É uma ordenação inerente da plataforma, não uma falha: o recurso de
+    endpoint exige `entity_version` numérico — o DABs recusa alias —, então o
+    alias precisa resolver na hora de GERAR o bundle. Um domínio novo tem que
+    treinar antes de conseguir deployar serving online.
+
+    Existe como exceção própria porque o erro cru do SDK é
+    `Schema '<catalog>.<domain>_models' does not exist`: verdadeiro, e inútil
+    para quem não conhece a ordem.
+    """
+
+
 class SdkModelRegistry:
     def version_for_alias(self, full_model_name: str, alias: str) -> int:
         from databricks.sdk import WorkspaceClient
+        from databricks.sdk.errors import NotFound
 
-        return WorkspaceClient().model_versions.get_by_alias(full_model_name, alias).version
+        try:
+            return WorkspaceClient().model_versions.get_by_alias(full_model_name, alias).version
+        except NotFound as erro:
+            raise ModelNotTrainedYet(
+                f"'{full_model_name}@{alias}' nao existe ainda.\n"
+                "O bundle de serving online precisa da versao numerica na geracao, "
+                "porque o DABs nao aceita alias em model_serving_endpoints.\n"
+                "Rode o pipeline de treino deste dominio antes — ele registra o "
+                "modelo e move o alias."
+            ) from erro
 
 
 class SdkEndpointGateway:
