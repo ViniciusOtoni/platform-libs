@@ -193,7 +193,15 @@ def test_online_true_without_an_online_store_fails_loudly():
         _execute(_usecase(online=None), spec=_spec(online=True))
 
 
-def test_partition_cols_default_to_the_first_entity_key():
+def test_partition_cols_default_to_the_timestamp_key():
+    """O backfill grava com `partitionOverwriteMode=dynamic`. Particionado pela
+    chave de ENTIDADE, cada janela substituía a partição inteira do cliente e
+    apagava as safras anteriores dele — rodar backfill de oito meses deixava
+    uma safra na tabela, com as oito execuções registradas como SUCCESS.
+
+    Uma feature store sem histórico é uma feature store sem ponto-no-tempo: o
+    `FeatureLookup` com `timestamp_lookup_key` resolve contra uma safra só e
+    nunca pode estar errado nem certo."""
     writer = FakeFeatureWriter()
     # chave composta: o frame precisa carregar as duas colunas, senão o gate
     # reprova por schema antes de a escrita acontecer
@@ -204,7 +212,8 @@ def test_partition_cols_default_to_the_first_entity_key():
         spec=_spec(entity_keys=["customer_id", "region"], compute_fn=lambda sources, window: frame),
     )
 
-    assert writer.writes[0]["partition_cols"] == ["customer_id"]
+    assert writer.writes[0]["partition_cols"] == ["feature_ts"]
+    assert "customer_id" not in writer.writes[0]["partition_cols"]
 
 
 def test_partition_cols_can_be_declared_on_the_spec():
