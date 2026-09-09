@@ -16,7 +16,7 @@ O mesmo ciclo estava escrito **quatro** vezes. O que mudou não foi o número de
 | Suíte completa | 12,6 s | `pytest -q` |
 | Infraestrutura para rodar a suíte | nenhuma | sem Spark, sem workspace, sem rede |
 
-Dados do próprio repositório, medidos na versão `3.13.1` do wheel.
+Dados do próprio repositório, medidos na versão `3.13.2` do wheel.
 
 Dessa forma, podemos ter a visibilidade de que o ciclo inteiro cabe em um processo local e que o custo de mexer nele é de segundos, não de um cluster subindo. Não vou entrar no mérito das horas perdidas esperando o job falhar no ambiente, mas é fato que isso é um grande alerta para todo time de plataforma, levando em consideração que um dos braços mais relevantes é a velocidade com que ele corrige e devolve o componente para o domínio.
 
@@ -83,7 +83,7 @@ Aqui eu quebrei o framework em contextos. O repositório de domínio, como o [`e
 
 ```toml
 dependencies = [
-  "mlplatform @ https://github.com/ViniciusOtoni/platform-libs/releases/download/mlplatform-v3.13.1/mlplatform-3.13.1-py3-none-any.whl",
+  "mlplatform @ https://github.com/ViniciusOtoni/platform-libs/releases/download/mlplatform-v3.13.2/mlplatform-3.13.2-py3-none-any.whl",
 ]
 ```
 
