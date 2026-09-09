@@ -1,10 +1,12 @@
-# O ciclo de ML dentro de um pacote só
+# O ciclo de ML escrito uma vez
 
-**Atenção**: este repositório é o outro lado do comparativo que abri no repositório de domínio. Lá eu mostro o que o cientista de dados vê; aqui eu mostro o que sustenta aquilo. Não vamos nos aprofundar em conceitos de Ciência de Dados como estatística etc. Peguei este recorte por ser o componente que eu de fato mantenho, e porque é nele que a diferença entre "ter processo" e "não ter processo" aparece em código.
+**Atenção**: este repositório é o outro lado do comparativo que abri no [`exemplo-domain`](https://github.com/ViniciusOtoni/exemplo-domain). Lá eu mostro o que o cientista de dados vê; aqui eu mostro o que sustenta aquilo. Não vamos nos aprofundar em conceitos de Ciência de Dados como estatística etc. Peguei este recorte por ser o componente que eu de fato mantenho, e porque é nele que a diferença entre "ter processo" e "não ter processo" aparece em código.
 
-Eram **quatro** repositórios, um por etapa da jornada. Hoje é **um** pacote.
+Ressalto desde já que os cinco contextos estarem num pacote só é uma decisão de **apresentação**, e não uma recomendação de arquitetura. Em escala, cada componente com o seu próprio repositório é o desenho que eu defenderia, e a seção [Quando isso deveria ser N repositórios](#quando-isso-deveria-ser-n-repositórios) trata disso.
 
-## Problema de manter o ciclo espalhado
+O mesmo ciclo estava escrito **quatro** vezes. O que mudou não foi o número de repositórios, foi passar a existir **um** contrato.
+
+## Problema de reescrever o ciclo em cada componente
 
 | Indicador | Valor | Onde se verifica |
 | --- | --- | --- |
@@ -18,15 +20,15 @@ Dados do próprio repositório, medidos na versão `3.13.1` do wheel.
 
 Dessa forma, podemos ter a visibilidade de que o ciclo inteiro cabe em um processo local e que o custo de mexer nele é de segundos, não de um cluster subindo. Não vou entrar no mérito das horas perdidas esperando o job falhar no ambiente, mas é fato que isso é um grande alerta para todo time de plataforma, levando em consideração que um dos braços mais relevantes é a velocidade com que ele corrige e devolve o componente para o domínio.
 
-Quando o mesmo ciclo passou a ser servido por um pacote único, podemos levantar uma série de questionamentos:
+Dito isso, podemos levantar uma série de questionamentos:
 
-* Será que quatro repositórios significavam quatro problemas? (Acredito que não exista uma diferença grande aqui: era o mesmo time escrevendo o mesmo código quatro vezes.)
+* Será que o problema era o número de repositórios? (Acredito que não: o problema era a mesma regra existir em quatro versões, sem nada que dissesse qual delas valia.)
 
-* Como o padrão se mantém agora que cinco bundles de domínio dependem da mesma peça?
+* Como o padrão se mantém quando cinco bundles de domínio dependem da mesma peça, estando ela em um repositório ou em cinco?
 
 ---
 
-Esse problema de engenharia que foi abordado e muitos outros que estão atrelados à jornada de ML podem ser resolvidos com um framework único, testável e com contrato explícito. Mas antes de explicar como resolver o problema, vamos entender qual é a situação oposta dessa ideação de framework.
+Esse problema de engenharia que foi abordado e muitos outros que estão atrelados à jornada de ML podem ser resolvidos com um contrato explícito, testável e versionado. Mas antes de explicar como resolver o problema, vamos entender qual é a situação oposta dessa ideação de framework.
 
 ## O problema de não ter um framework consolidado
 
@@ -56,9 +58,9 @@ Note que todos esses problemas são causados pela falta de fronteiras explícita
 
 O objetivo é simples: o domínio declara o que é específico dele e o framework monta o job, executa o ciclo e gera o bundle. Porém não é trivial.
 
-A ideia é que o cientista escreva apenas o contrato — a função marcada, a dataclass de treino, a estrutura da tabela de saída e o alvo do monitor — e que tudo o que vem depois (a orquestração, o YAML do job, os grants no Unity Catalog, o registro no MLflow) seja responsabilidade do pacote, versionado e testado em um lugar só.
+A ideia é que o cientista escreva apenas o contrato — a função marcada, a dataclass de treino, a estrutura da tabela de saída e o alvo do monitor — e que tudo o que vem depois (a orquestração, o YAML do job, os grants no Unity Catalog, o registro no MLflow) seja responsabilidade do framework, versionado e testado, e não reescrito componente a componente.
 
-O ganho aqui é deixar a fronteira visível: o que muda por domínio fica no domínio, o que é padrão fica no framework e o que é infraestrutura fica confinado nos adapters. Isso aplica consistência em toda a jornada e, por fim, também economiza custos para a instituição, já que a mesma correção chega aos cinco componentes em uma release.
+O ganho aqui é deixar a fronteira visível: o que muda por domínio fica no domínio, o que é padrão fica no framework e o que é infraestrutura fica confinado nos adapters. Isso aplica consistência em toda a jornada e, por fim, também economiza custos para a instituição, já que a mesma correção deixa de ser refeita em cada componente.
 
 ## Como esse framework foi montado
 
@@ -77,7 +79,7 @@ src/mlplatform/
 └── testing.py     fakes publicados, para os domínios testarem
 ```
 
-Aqui eu quebrei o framework em contextos. O repositório de domínio apenas declara o que é dele e instala o pacote pinado por release:
+Aqui eu quebrei o framework em contextos. O repositório de domínio, como o [`exemplo-domain`](https://github.com/ViniciusOtoni/exemplo-domain), apenas declara o que é dele e instala o pacote pinado por release:
 
 ```toml
 dependencies = [
@@ -117,7 +119,9 @@ O ganho prático é o tempo de teste. A suíte inteira roda em um processo local
 
 **2. O contrato de import:** duas regras, e as duas valem mais do que parecem.
 
-Contextos não se importam entre si. `features` não importa `training`, e assim por diante. O que for comum sobe para `core`. Com quatro repositórios separados isso era impossível por construção; num pacote só, custa um import, e voltaria em semanas se dependesse de code review.
+Contextos não se importam entre si. `features` não importa `training`, e assim por diante. O que for comum sobe para `core`.
+
+Note que essa é uma garantia que repositórios separados davam de graça: lá o acoplamento entre contextos era impossível por construção. Num pacote só ele custa um import, e voltaria em semanas se dependesse de code review, então precisa ser comprado de volta com lint e teste. É a primeira fatura de juntar tudo, e ela é paga em ferramenta.
 
 Infraestrutura só entra pelos adapters, e com o import dentro do método. Não no topo do arquivo.
 
@@ -273,41 +277,6 @@ Do limiar e do cron declarados aqui saem o monitor, o baseline e o dashboard, se
 
 ![score-batch](docs/img/score-batch.png)
 
-O nome tem uma restrição que não é óbvia. Ao rodar um `python_wheel_task`, o Databricks monta uma célula assim:
-
-```python
-entry = [ep for ep in metadata.distribution(pkg).entry_points if ep.name == "<nome>"]
-if entry:
-    entry[0].load()()
-else:
-    module = importlib.import_module(pkg)
-    module.<nome>()          # o nome entra cru, com hífens e tudo
-```
-
-A última linha é lixo, porque hífen não é identificador. Mas o Python compila a célula inteira antes de executar qualquer coisa, então ela precisa ao menos parsear, mesmo sendo um ramo morto.
-
-E quase sempre parseia por acidente: `module.mlp-score-batch()` vira a expressão `module.mlp - score - batch()`, uma cadeia de subtrações entre nomes. Feio, mas válido.
-
-O acidente para de funcionar quando um dos pedaços entre hífens é uma palavra reservada. Foi o que derrubou `mlp-fit-and-compare`, que virou `mlp - fit - and - compare()` e não compila. Daí o nome atual, e daí um teste que tenta compilar a linha gerada para cada script declarado.
-
-**6. Testes:** 280, e nenhum precisa de cluster.
-
-Os fakes ficam em `mlplatform.testing` e são publicados de propósito. Sem isso, cada domínio escreveria os seus, e um fake permissivo esconde bug: o `FakeExperimentTracker` levanta `ImmutableParamError` na reescrita de um parâmetro porque o MLflow real também levanta.
-
-```python
-from mlplatform.testing import FakeFeatureWriter, FakeSourceReader, InMemoryAuditStore
-```
-
-Três testes existem para pegar falha que só apareceria em produção:
-
-| teste | o que guarda |
-| --- | --- |
-| `test_import_hygiene` | o container de serving quebrando por import transitivo de infra |
-| `test_entrypoint_names` | o nome de console script que o launcher do Databricks não consegue compilar |
-| `test_resource_gen` (por contexto) | job parameter declarado num gerador e não aceito pelo parser |
-
-O terceiro merece nota. O Databricks injeta todo job parameter em todas as tasks do job, não só na que o declarou. Um argumento que um parser não conhece aborta a task com `SystemExit(2)`, sem dizer qual argumento foi.
-
 ### Como o pacote chega no domínio
 
 A CI roda no PR contra a `main`, consumindo a esteira compartilhada do [`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform):
@@ -322,11 +291,37 @@ jobs:
     secrets: inherit
 ```
 
-O `ruff-framework.toml` é o contrato de arquitetura interna descrito acima. Repositórios de domínio ficam no `ruff.toml` puro, porque eles importam pyspark e o SDK legitimamente e as regras de import misfirariam lá.
+O `ruff-framework.toml` é o contrato de arquitetura interna descrito acima. Repositórios de domínio como o [`exemplo-domain`](https://github.com/ViniciusOtoni/exemplo-domain) ficam no `ruff.toml` puro, porque eles importam pyspark e o SDK legitimamente e as regras de import misfirariam lá.
 
 O merge na `main` cria a tag, publica a release e anexa o wheel. Cada bundle de domínio pina a URL exata dessa release, o que permite subir um componente sem arrastar os outros.
 
-Note que a versão é pinada exata, nunca por range. Com um pacote único servindo cinco bundles, é isso que preserva a possibilidade de migrar um de cada vez.
+Note que a versão é pinada exata, nunca por range. Enquanto um pacote único serve cinco bundles, é isso que preserva a possibilidade de migrar um de cada vez. Repare no efeito colateral: uma correção que só toca `monitoring` gera uma versão nova do pacote inteiro, e os cinco bundles passam a estar atrás de uma release que, para quatro deles, não mudou nada.
+
+### Quando isso deveria ser N repositórios
+
+Aqui os cinco contextos moram juntos por um motivo específico: a jornada precisava caber em um lugar só para ser apresentada de ponta a ponta. Não é o desenho que eu levaria para escala, e vale dizer por quê.
+
+Cada contexto já é fechado. Ele tem o seu `contract.py`, as suas `ports.py`, os seus `usecases.py`, os seus `adapters.py`, o seu `resource_gen.py` e o seu `naming.py`, e não importa nenhum outro contexto. A fronteira que separaria os repositórios já existe; o que ela ainda não tem é uma fronteira de **entrega**.
+
+O que cada componente ganharia ao virar repositório próprio:
+
+| o que passa a ser dele | por que importa em escala |
+| --- | --- |
+| esteira de CI/CD própria | o lint e a suíte rodam sobre o que mudou, não sobre os cinco contextos |
+| cadência de release própria | corrigir o monitor não obriga treino e serving a atravessar uma versão nova |
+| template de bundle próprio | o job de features evolui sem tocar no YAML dos outros componentes |
+| versionamento próprio | o domínio pina `features@2.4.0` e `serving@1.9.0`, e migra um por vez |
+| dono explícito | o `CODEOWNERS` deixa de ser do pacote inteiro e passa a ser do componente |
+
+E o que fica mais caro, que é a parte que raramente aparece nas apresentações:
+
+* O que hoje é `core` vira um pacote publicado, e todo contexto passa a depender de uma versão dele. Mudança em `core` vira migração coordenada entre N repositórios, e não mais um import.
+
+* Aparece uma matriz de compatibilidade. Alguém precisa responder se `training@3.2` funciona com `core@1.7`, e essa resposta tem que ser testada em algum lugar.
+
+* A esteira compartilhada passa a ser obrigatória, não conveniente. Sem algo como o [`mlops-platform`](https://github.com/ViniciusOtoni/mlops-platform), cada repositório reinventa a sua CI e o padrão se dissolve exatamente onde ele deveria ser mais forte.
+
+O corte, então, não é ideológico. Ele é o ponto em que os componentes passam a evoluir em ritmos diferentes e a ter donos diferentes: enquanto o mesmo time mexe nos cinco na mesma semana, o pacote único paga menos; quando cada componente tem o seu backlog e a sua janela de deploy, o repositório separado paga menos. O que não muda em nenhum dos dois cenários é o contrato, e é por isso que ele é a parte que este repositório trata como intocável.
 
 ### Como rodar aqui
 
@@ -348,6 +343,8 @@ Hoje meu framework está totalmente atrelado ao Databricks. Talvez com um certo 
 
 Conseguimos manter a lógica pura e testável e ainda confinar a infraestrutura real nos adapters; também conseguimos utilizar os `entry points` para descobrir o domínio sem caminho hardcoded, além de conseguir promover o reúso do nosso componente em toda a plataforma.
 
+Ressalto que essa é a solução para o recorte que eu quis mostrar, com um domínio de exemplo em [`exemplo-domain`](https://github.com/ViniciusOtoni/exemplo-domain) e um time só mantendo os cinco contextos. Troque qualquer uma dessas duas condições e o desenho de entrega muda, ainda que o contrato não mude.
+
 ## Como outros players reagiram ao mesmo problema
 
 Os problemas que levantei acima não estão presentes apenas no meu ecossistema. A Uber e a Netflix passaram exatamente pela mesma dor e publicaram o que fizeram, e o interessante é que responderam de formas opostas.
@@ -368,7 +365,7 @@ A mensagem aqui é a decisão tomada por ambas as empresas. No caso da Netflix, 
 
 ## O que muda no fim
 
-Fazendo uma alusão aos questionamentos levantados no começo: quatro repositórios eram mesmo quatro problemas diferentes? Não posso dizer que essa é a única leitura possível, mas tudo indica que era o mesmo ciclo escrito quatro vezes, e o que mudou foi o lugar onde ele passou a morar.
+Fazendo uma alusão aos questionamentos levantados no começo: o problema era mesmo o número de repositórios? Não posso dizer que essa é a única leitura possível, mas tudo indica que era o mesmo ciclo escrito quatro vezes sem contrato, e o que mudou foi passar a existir um. Onde esse contrato mora, se em um repositório ou em cinco, é a decisão seguinte, e ela depende de escala.
 
 ### As perguntas do começo, respondidas
 
@@ -376,19 +373,19 @@ No início, levantei alguns questionamentos do time de plataforma. Todos já for
 
 | A pergunta do começo | O que responde | A prova |
 | --- | --- | --- |
-| *Onde mora a regra, se ela foi copiada para todo lado?* | um pacote, cinco contextos com o mesmo esqueleto | [arquitetura](docs/img/arquitetura.png) · [linhagem da feature](docs/img/lineage-feature.png) |
+| *Onde mora a regra, se ela foi copiada para todo lado?* | um contrato por contexto, todos com o mesmo esqueleto | [arquitetura](docs/img/arquitetura.png) · [linhagem da feature](docs/img/lineage-feature.png) |
 | *Como testo o ciclo sem cluster?* | portas recebidas por parâmetro e fakes publicados | `mlplatform.testing` · 280 testes em 12,6 s |
 | *Como garanto que o endpoint não puxa infra?* | import de infraestrutura só dentro do adapter | [score online](docs/img/score-online.png) · `test_import_hygiene` |
 | *Como o job descobre o domínio sem notebook?* | entry point declarado no `pyproject.toml` do domínio | [task do wheel](docs/img/score-batch.png) · [child runs e champion](docs/img/runs-mlflow.png) |
 
-Note que aqui reduzimos a duplicação da lógica, aumentamos a eficiência do ciclo de correção e temos uma maior confiança e maturidade nos processos. O trade-off aqui é que um pacote único também é um ponto único de mudança, e segurar isso depende de release pinada e de disciplina de contrato, mas isso é uma discussão para outro dia hahaha
+Note que aqui reduzimos a duplicação da lógica, aumentamos a eficiência do ciclo de correção e temos uma maior confiança e maturidade nos processos. O trade-off é o que descrevi em [Quando isso deveria ser N repositórios](#quando-isso-deveria-ser-n-repositórios): manter os cinco contextos juntos foi uma escolha de apresentação, e ela cobra em release acoplada e em ponto único de mudança. Em escala, esse mesmo contrato caberia em cinco repositórios, cada um com a sua esteira e a sua cadência, mas isso é uma discussão para outro dia hahaha
 
 ### O ganho por persona
 
-**Para o cientista:** ele escreve contrato, e não orquestração.
+**Para o cientista:** ele escreve contrato, e não orquestração. Isso vale igual esteja o framework em um repositório ou em cinco, porque o que ele importa é o contrato.
 
-**Para o time de plataforma:** uma correção, uma release e cinco componentes atendidos, com a arquitetura verificada por lint e por teste.
+**Para o time de plataforma:** a arquitetura verificada por lint e por teste, e uma fronteira por contexto que já está pronta para virar um repositório quando o componente pedir dono e cadência próprios.
 
 **Para a instituição:** eficiência e controle. O componente novo já nasce padronizado; o ciclo de correção deixa de depender de cluster e passa a durar segundos.
 
-Um framework não deixa o modelo mais inteligente. Ele faz com que o ciclo escrito uma vez seja exatamente o ciclo que roda em todos os domínios.
+Um framework não deixa o modelo mais inteligente. Ele faz com que o ciclo escrito uma vez seja exatamente o ciclo que roda em todos os domínios, esteja ele empacotado junto ou separado.
